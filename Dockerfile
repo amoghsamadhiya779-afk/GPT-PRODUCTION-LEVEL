@@ -36,4 +36,4 @@ EXPOSE 8000
 EXPOSE 8501
 
 # Default runtime command (can be overridden in docker-compose)
-CMD ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD uvicorn app.api:app --host 0.0.0.0 --port $PORT

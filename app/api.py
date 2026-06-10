@@ -10,6 +10,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 
+import torch
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
