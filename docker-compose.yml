@@ -1,0 +1,45 @@
+# docker-compose.yml
+# ============================================================
+#  GPT-2 Microservices Orchestration (API + Streamlit UI)
+# ============================================================
+
+version: '3.8'
+
+services:
+  # 1. FastAPI Model serving container
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gpt-serving-api
+    command: uvicorn app.api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./checkpoints_tiny:/app/checkpoints_tiny
+      - ./logs_tiny:/app/logs_tiny
+      - ./logs:/app/logs
+    environment:
+      - MODEL_CHECKPOINT=checkpoints_tiny/best_model.pt
+    restart: unless-stopped
+
+  # 2. Streamlit interactive UI container
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gpt-streamlit-dashboard
+    command: streamlit run app/dashboard.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./checkpoints_tiny:/app/checkpoints_tiny
+      - ./logs_tiny:/app/logs_tiny
+      - ./logs:/app/logs
+    environment:
+      - BACKEND_URL=http://api:8000
+    restart: unless-stopped

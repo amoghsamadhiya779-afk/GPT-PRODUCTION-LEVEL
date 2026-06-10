@@ -23,6 +23,7 @@ import sys
 import time
 
 import torch
+import mlflow
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -114,6 +115,34 @@ def train(
     n_params = count_parameters(model)
     logger.info("Model parameters: %s (%.1fM)", f"{n_params:,}", n_params / 1e6)
 
+    # Set up MLflow tracking
+    os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
+    mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
+    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    mlflow.set_experiment("GPT-2 Pretraining")
+    mlflow.start_run(run_name="gpt2-pretraining")
+
+    # Log config parameters
+    mlflow.log_params({
+        "vocab_size": model_cfg.vocab_size,
+        "context_length": model_cfg.context_length,
+        "emb_dim": model_cfg.emb_dim,
+        "n_heads": model_cfg.n_heads,
+        "n_layers": model_cfg.n_layers,
+        "dropout": model_cfg.dropout,
+        "qkv_bias": model_cfg.qkv_bias,
+    })
+    mlflow.log_params({
+        "learning_rate": train_cfg.learning_rate,
+        "num_epochs": train_cfg.num_epochs,
+        "batch_size": train_cfg.batch_size,
+        "weight_decay": train_cfg.weight_decay,
+        "warmup_steps": train_cfg.warmup_steps,
+        "max_grad_norm": train_cfg.max_grad_norm,
+        "seed": train_cfg.seed,
+    })
+    mlflow.log_param("parameter_count", n_params)
+
     # ─── Optimizer ───────────────────────────────────────────────
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -190,6 +219,11 @@ def train(
                     train_loss, val_loss, lr,
                 )
 
+                # Log metrics to MLflow
+                mlflow.log_metric("train_loss", train_loss, step=global_step)
+                mlflow.log_metric("val_loss", val_loss, step=global_step)
+                mlflow.log_metric("learning_rate", lr, step=global_step)
+
                 # Save best model
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -226,11 +260,20 @@ def train(
         "model_config": model_cfg.to_dict(),
     }, final_path)
     logger.info("Final model saved to %s", final_path)
+    mlflow.log_artifact(final_path)
+
+    # Log best checkpoint to MLflow if it was saved
+    best_path = os.path.join(train_cfg.save_dir, "best_model.pt")
+    if os.path.exists(best_path):
+        mlflow.log_artifact(best_path)
 
     # Plot losses
     if train_losses:
         plot_path = os.path.join(train_cfg.log_dir, "loss.png")
         plot_losses(train_losses, val_losses, track_tokens_seen, train_cfg.num_epochs, plot_path)
+        if os.path.exists(plot_path):
+            mlflow.log_artifact(plot_path)
+    mlflow.end_run()
 
 
 def main() -> None:

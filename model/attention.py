@@ -56,14 +56,21 @@ class MultiHeadAttention(nn.Module):
             torch.triu(torch.ones(context_length, context_length), diagonal=1)
         )
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self,
+        x: Tensor,
+        layer_past: tuple[Tensor, Tensor] | None = None,
+        use_cache: bool = False,
+    ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
         """Forward pass through multi-head causal self-attention.
 
         Args:
             x: Input tensor of shape (batch_size, num_tokens, d_in).
+            layer_past: Optional tuple of (past_keys, past_values) from previous steps.
+            use_cache: Whether to return key/value states for caching.
 
         Returns:
-            Output tensor of shape (batch_size, num_tokens, d_out).
+            Tuple of (output tensor, updated layer_past cache).
         """
         b, num_tokens, d_in = x.shape
 
@@ -82,12 +89,25 @@ class MultiHeadAttention(nn.Module):
         queries = queries.transpose(1, 2)
         values = values.transpose(1, 2)
 
+        # Concatenate with past key/value states if present
+        if layer_past is not None:
+            past_keys, past_values = layer_past
+            keys = torch.cat((past_keys, keys), dim=-2)
+            values = torch.cat((past_values, values), dim=-2)
+
+        # Current layer's key/value cache
+        present = (keys, values)
+
         # Scaled dot-product attention: Q @ K^T / sqrt(head_dim)
         attn_scores = queries @ keys.transpose(2, 3)
 
         # Apply causal mask — prevent attending to future tokens
-        mask_bool = self.mask.bool()[:num_tokens, :num_tokens]
-        attn_scores.masked_fill_(mask_bool, -torch.inf)
+        total_tokens = keys.shape[-2]
+        if num_tokens > 1:
+            prev_tokens = total_tokens - num_tokens
+            mask_bool = self.mask.bool()[:total_tokens, :total_tokens]
+            sliced_mask = mask_bool[prev_tokens:total_tokens, :total_tokens]
+            attn_scores.masked_fill_(sliced_mask, -torch.inf)
 
         attn_weights = torch.softmax(attn_scores / keys.shape[-1]**0.5, dim=-1)
         attn_weights = self.dropout(attn_weights)
@@ -99,4 +119,4 @@ class MultiHeadAttention(nn.Module):
         context_vec = context_vec.contiguous().view(b, num_tokens, self.d_out)
         context_vec = self.out_proj(context_vec)
 
-        return context_vec
+        return context_vec, present

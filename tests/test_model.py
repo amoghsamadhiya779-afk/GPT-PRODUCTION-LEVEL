@@ -52,7 +52,7 @@ class TestMultiHeadAttention:
             dropout=0.0, num_heads=4,
         )
         x = torch.randn(2, 10, 64)
-        out = mha(x)
+        out, _ = mha(x)
         assert out.shape == (2, 10, 64)
 
     def test_causal_mask_exists(self):
@@ -86,7 +86,7 @@ class TestLayers:
     def test_transformer_block(self):
         block = TransformerBlock(TINY_CONFIG)
         x = torch.randn(2, 10, 64)
-        out = block(x)
+        out, _ = block(x)
         assert out.shape == x.shape
 
 
@@ -109,3 +109,25 @@ class TestGPTModel:
         n = count_parameters(model)
         assert n > 0
         assert isinstance(n, int)
+
+    def test_kv_cache_equivalence(self):
+        from model.gpt import generate
+        model = GPTModel(TINY_CONFIG)
+        model.eval()
+        idx = torch.randint(0, 100, (1, 8))
+        
+        # Generation with standard (no cache) mode
+        torch.manual_seed(42)
+        out_no_cache = generate(
+            model, idx.clone(), max_new_tokens=10, context_size=32,
+            temperature=0.8, top_k=5, use_cache=False
+        )
+        
+        # Generation with KV-cache mode
+        torch.manual_seed(42)
+        out_with_cache = generate(
+            model, idx.clone(), max_new_tokens=10, context_size=32,
+            temperature=0.8, top_k=5, use_cache=True
+        )
+        
+        assert torch.equal(out_no_cache, out_with_cache), "Cached and non-cached generation must yield identical tokens"

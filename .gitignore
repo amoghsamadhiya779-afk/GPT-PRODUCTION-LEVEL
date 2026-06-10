@@ -44,3 +44,5 @@ Thumbs.db
 # Misc
 .sixth/
 .pytest_cache/
+mlflow.db
+mlruns/

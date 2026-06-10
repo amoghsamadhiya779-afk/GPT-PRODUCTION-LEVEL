@@ -99,11 +99,16 @@ class TransformerBlock(nn.Module):
         self.norm2 = LayerNorm(cfg["emb_dim"])
         self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(
+        self,
+        x: Tensor,
+        layer_past: tuple[Tensor, Tensor] | None = None,
+        use_cache: bool = False,
+    ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
         # Shortcut connection for attention block
         shortcut = x
         x = self.norm1(x)
-        x = self.att(x)            # (batch_size, num_tokens, emb_dim)
+        x, present = self.att(x, layer_past=layer_past, use_cache=use_cache)  # (batch_size, num_tokens, emb_dim)
         x = self.drop_shortcut(x)
         x = x + shortcut           # Residual connection
 
@@ -114,4 +119,4 @@ class TransformerBlock(nn.Module):
         x = self.drop_shortcut(x)
         x = x + shortcut           # Residual connection
 
-        return x
+        return x, present
