@@ -2,7 +2,7 @@
 title: GPT From Scratch
 emoji: 🚀
 colorFrom: gray
-colorTo: zinc
+colorTo: gray
 sdk: docker
 pinned: false
 ---
