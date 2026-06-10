@@ -1,0 +1,32 @@
+# configs/gpt2_tiny.yaml
+# ============================================================
+#  GPT-2 Tiny (approx. 2M parameters) — Configuration File
+# ============================================================
+#  Use this tiny configuration for fast testing, validation, and
+#  running the training loop on CPU-only machines.
+#
+#  Usage:
+#    py training/train.py --config configs/gpt2_tiny.yaml
+# ============================================================
+
+model:
+  vocab_size: 50257          # GPT-2 BPE vocabulary size
+  context_length: 256        # Max sequence length
+  emb_dim: 128               # Embedding dimension
+  n_heads: 4                 # Number of attention heads
+  n_layers: 2                # Number of transformer blocks
+  dropout: 0.1               # Dropout rate
+  qkv_bias: false            # Bias in Q/K/V projections
+
+training:
+  learning_rate: 1.0e-3      # Peak learning rate
+  num_epochs: 2              # Number of training epochs
+  batch_size: 2              # Sequences per batch
+  weight_decay: 0.1          # AdamW weight decay
+  warmup_steps: 5            # Linear warmup steps
+  max_grad_norm: 1.0         # Gradient clipping threshold
+  eval_freq: 10              # Evaluate every N steps
+  eval_iter: 2               # Batches per evaluation
+  save_dir: checkpoints_tiny # Checkpoint output directory
+  log_dir: logs_tiny         # Logging output directory
+  seed: 123                  # Random seed

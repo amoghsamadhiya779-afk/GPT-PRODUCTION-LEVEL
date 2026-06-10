@@ -1,0 +1,46 @@
+# .gitignore — GPT-PRODUCTION-LEVEL
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# PyTorch
+*.pth
+*.pt
+checkpoints/
+checkpoints_tiny/
+
+# Training outputs
+logs/
+logs_tiny/
+*.pdf
+loss.png
+
+# Data
+data/*.txt
+!data/download.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+.sixth/
+.pytest_cache/
