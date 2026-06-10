@@ -42,27 +42,48 @@ if sys.platform == "win32":
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Context manager for FastAPI application startup and shutdown lifecycle events."""
+    import threading
+    
     # 1. Determine checkpoint path
     checkpoint_path = os.environ.get("MODEL_CHECKPOINT")
     
     if not checkpoint_path:
-        # Check default paths
         tiny_path = os.path.join("checkpoints_tiny", "best_model.pt")
         small_path = os.path.join("checkpoints", "best_model.pt")
         if os.path.exists(small_path):
             checkpoint_path = small_path
         elif os.path.exists(tiny_path):
             checkpoint_path = tiny_path
-        else:
-            # Checkpoint is missing! Let's download and build the GPT-2 Small checkpoint dynamically.
-            try:
-                logger.info("No checkpoint found. Dynamically loading/creating pretrained GPT-2 Small weights...")
-                from training.load_pretrained import main as load_weights
-                load_weights()
-                if os.path.exists(small_path):
-                    checkpoint_path = small_path
-            except Exception as e:
-                logger.error("Failed to dynamically load pretrained weights: %s", e)
+
+    # Initialize state variables
+    app.state.status = "initializing"
+    app.state.checkpoint_path = "None"
+    app.state.parameter_count = 0
+    app.state.device = "cpu"
+
+    # Define helper for async weight loading
+    def load_weights_background(application):
+        try:
+            logger.info("Starting background download/mapping of pretrained weights...")
+            from training.load_pretrained import main as load_weights
+            load_weights()
+            
+            # Recheck and load
+            small_path = os.path.join("checkpoints", "best_model.pt")
+            if os.path.exists(small_path):
+                logger.info("Loading background-downloaded model checkpoint from: %s", small_path)
+                engine = GPTInferenceEngine(small_path)
+                application.state.engine = engine
+                application.state.status = "active"
+                application.state.checkpoint_path = small_path
+                application.state.parameter_count = engine.parameter_count
+                application.state.device = str(engine.device)
+                logger.info("Model loaded successfully in background thread.")
+        except Exception as err:
+            logger.error("Background weight load failed: %s", err)
+            if not hasattr(application.state, "engine"):
+                application.state.status = "error"
+                application.state.error_msg = str(err)
 
     # 2. Try loading the model engine
     if checkpoint_path and os.path.exists(checkpoint_path):
@@ -80,10 +101,9 @@ async def lifespan(app: FastAPI):
             app.state.status = "error"
             app.state.error_msg = str(e)
     else:
-        # Fail-safe fallback: Start with a tiny untrained model so the service doesn't crash on boot
-        logger.warning("No checkpoint found. Initializing untrained dummy model for API functionality.")
+        # Checkpoint is missing! Boot fallback dummy model first to keep port open.
+        logger.warning("No checkpoint found. Initializing untrained dummy model and starting background download.")
         try:
-            # Build tiny dummy model config (approx 1.5M parameters)
             dummy_cfg = {
                 "vocab_size": 50257,
                 "context_length": 256,
@@ -103,7 +123,6 @@ async def lifespan(app: FastAPI):
                     self.parameter_count = count_parameters(self.model)
                 
                 def generate(self, prompt, max_new_tokens=50, temperature=0.8, top_k=50, use_cache=True):
-                    # Fast dummy generation
                     input_ids = self.tokenizer.text_to_token_ids(prompt)
                     import time
                     start = time.perf_counter()
@@ -117,18 +136,21 @@ async def lifespan(app: FastAPI):
                     num_gen = output_ids.shape[1] - input_ids.shape[1]
                     return {
                         "prompt": prompt,
-                        "generated_text": generated_text + " [Untrained Fallback Dummy Model Output]",
+                        "generated_text": generated_text + " [Initializing Model... Please wait a few seconds]",
                         "tokens_generated": num_gen,
                         "time_taken_seconds": latency,
                         "tokens_per_second": num_gen / latency if latency > 0 else 0.0
                     }
             
             app.state.engine = DummyEngine(dummy_cfg)
-            app.state.status = "untrained_fallback"
-            app.state.checkpoint_path = "None (Fallback Dummy Model)"
+            app.state.status = "loading"  # indicate it's loading the real weights in background
+            app.state.checkpoint_path = "None (Downloading Real Weights...)"
             app.state.parameter_count = app.state.engine.parameter_count
             app.state.device = "cpu"
-            logger.info("Fallback dummy model active.")
+            
+            # Start background thread to download and swap weights
+            t = threading.Thread(target=load_weights_background, args=(app,), daemon=True)
+            t.start()
         except Exception as e:
             logger.critical("Failed to build fallback model: %s", e)
             app.state.status = "failed"

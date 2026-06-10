@@ -9,7 +9,7 @@ import ParticleBackground from "@/components/ParticleBackground";
 import AnalyticsView from "@/components/AnalyticsView";
 import ArchitectureView from "@/components/ArchitectureView";
 import { useTheme } from "@/components/ThemeProvider";
-import { Settings, Cpu, LineChart, Menu, Plus, Activity } from "lucide-react";
+import { Settings, Cpu, LineChart, Menu, Plus, Activity, MessageSquare } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import Logo from "@/components/Logo";
 
@@ -24,6 +24,7 @@ interface ChatSession {
 export default function Home() {
   const { theme } = useTheme();
   const [currentNav, setCurrentNav] = useState<"chat" | "analytics" | "architecture">("chat");
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [settings, setSettings] = useState<ModelSettings>({
     model: "gpt-2-small",
     temperature: 0.8,
@@ -302,7 +303,7 @@ export default function Home() {
         {/* Mobile Header Bar */}
         <header className="flex md:hidden items-center justify-between px-4 h-16 border-b border-border bg-surface/50 backdrop-blur-md z-30 select-none w-full">
           <div className="flex items-center gap-3">
-            <Sheet>
+            <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
               <SheetTrigger className="p-2 rounded-lg border border-border bg-elevated/40 hover:bg-elevated/80 text-secondary transition-all cursor-pointer">
                 <Menu className="w-5 h-5" />
               </SheetTrigger>
@@ -316,36 +317,90 @@ export default function Home() {
                       </span>
                     </div>
                   </div>
-                  <div className="p-3">
-                    <button
-                      onClick={() => {
-                        handleNewChat();
-                      }}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-border bg-elevated/25 text-secondary hover:text-primary transition-all rounded-lg font-medium text-sm h-10"
-                    >
-                      <Plus className="w-4 h-4 text-accent" />
-                      New Chat
-                    </button>
+
+                  {/* Mobile View Navigation */}
+                  <div className="px-2 py-3 space-y-1 border-b border-border/60">
+                    <div className="px-3 mb-2 text-[10px] font-semibold text-muted uppercase tracking-wider">
+                      Navigation
+                    </div>
+                    {[
+                      { id: "chat", name: "Playground Chat", icon: MessageSquare },
+                      { id: "analytics", name: "Training Telemetry", icon: LineChart },
+                      { id: "architecture", name: "Model Architecture", icon: Cpu },
+                    ].map((item) => {
+                      const isActive = currentNav === item.id;
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => {
+                            setCurrentNav(item.id);
+                            setIsMobileMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-3 p-2.5 rounded-lg text-sm font-medium transition-all ${
+                            isActive
+                              ? "bg-primary/5 text-primary border border-primary/10 shadow-sm"
+                              : "text-secondary hover:bg-elevated/30 hover:text-primary border border-transparent"
+                          } px-3`}
+                        >
+                          <Icon className={`w-4.5 h-4.5 flex-shrink-0 ${isActive ? "text-accent" : "text-muted"}`} />
+                          <span>{item.name}</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                  <div className="flex-1 overflow-y-auto px-2 space-y-1">
-                    {sessions.map((chat) => (
-                      <button
-                        key={chat.id}
-                        onClick={() => handleSelectChat(chat.id)}
-                        className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
-                          currentSessionId === chat.id
-                            ? "bg-elevated/45 text-primary border border-border"
-                            : "text-secondary hover:bg-elevated/20"
-                        }`}
-                      >
-                        <span className="truncate flex-1">{chat.title}</span>
-                      </button>
-                    ))}
-                  </div>
+
+                  {/* Actions & Session List (Only shown if on Chat view) */}
+                  {currentNav === "chat" && (
+                    <>
+                      <div className="p-3">
+                        <button
+                          onClick={() => {
+                            handleNewChat();
+                            setIsMobileMenuOpen(false);
+                          }}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-border bg-elevated/25 text-secondary hover:text-primary transition-all rounded-lg font-medium text-sm h-10"
+                        >
+                          <Plus className="w-4 h-4 text-accent" />
+                          New Chat
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto px-2 space-y-1">
+                        <div className="px-3 mb-2 text-[10px] font-semibold text-muted uppercase tracking-wider">
+                          Recent Chats
+                        </div>
+                        {sessions.map((chat) => (
+                          <button
+                            key={chat.id}
+                            onClick={() => {
+                              handleSelectChat(chat.id);
+                              setIsMobileMenuOpen(false);
+                            }}
+                            className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
+                              currentSessionId === chat.id
+                                ? "bg-elevated/45 text-primary border border-border"
+                                : "text-secondary hover:bg-elevated/20"
+                            }`}
+                          >
+                            <MessageSquare className={`w-4 h-4 flex-shrink-0 ${currentSessionId === chat.id ? "text-accent" : "text-muted"}`} />
+                            <span className="truncate flex-1">{chat.title}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  
+                  {currentNav !== "chat" && (
+                    <div className="flex-1 flex items-center justify-center p-6 text-center text-xs text-muted">
+                      Select Playground Chat to view active sessions.
+                    </div>
+                  )}
+
                   <div className="p-3 border-t border-border mt-auto">
                     <button
                       onClick={() => {
                         setIsSettingsOpen(true);
+                        setIsMobileMenuOpen(false);
                       }}
                       className="w-full flex items-center gap-3 p-2.5 rounded-lg text-sm font-medium text-secondary hover:bg-elevated/40 hover:text-primary transition-all"
                     >
@@ -365,7 +420,10 @@ export default function Home() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setIsSettingsOpen(true)}
+              onClick={() => {
+                setIsSettingsOpen(true);
+                setIsMobileMenuOpen(false);
+              }}
               className="p-2 rounded-lg border border-border bg-elevated/40 hover:bg-elevated/80 text-secondary transition-all"
             >
               <Settings className="w-4.5 h-4.5" />

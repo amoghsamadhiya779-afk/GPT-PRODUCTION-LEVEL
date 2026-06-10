@@ -272,3 +272,25 @@ In a FAANG production setting, serving models with FastAPI and Streamlit is repl
 ### 3. Load Balancing & Queueing
 - **Asynchronous Task Queues**: For large-scale batch generation, requests are sent to a message broker (RabbitMQ/Kafka) and consumed by model serving queues to prevent blocking HTTP connections.
 - **API Gateway**: Run an API Gateway (like Kong or AWS API Gateway) to manage rate limiting, API token verification, and request routing across model clusters.
+
+---
+
+## 👨‍💻 About the Author
+
+### **Amogh Samadhiya** — *Backend & MLOps Engineer*
+
+Final-year B.Tech student specializing in ML Systems, Distributed Systems, and Production MLOps.
+
+| **Production Stack** | FastAPI • Docker • Kubernetes • MLflow • Apache Airflow • AWS • Python • C++17 |
+| :--- | :--- |
+
+**Featured Systems Engineering Projects:**
+* 🚀 **[Voyage Analytics](https://github.com/amoghsamadhiya779-afk/voyage-analytics-mlops)** — End-to-end MLOps platform orchestrating automated model pipelines with Apache Airflow and scalable deployments on Kubernetes.
+* 📈 **[Quantum Yield](https://github.com/amoghsamadhiya779-afk/quantitative-ml-trading-platform)** — Quantitative trading platform running BiLSTM forecasting models across 8 global market indices.
+* ⚡ **[Core AI Microservice](https://github.com/amoghsamadhiya779-afk/fastapi-ml-microservice)** — High-throughput 3-tier FastAPI & MySQL inference microservice deployed on AWS EC2.
+
+**Connect & Collaborate:**
+* 📧 **Email**: [amoghsamadhiya779@gmail.com](mailto:amoghsamadhiya779@gmail.com)
+* 🔗 **LinkedIn**: [amogh-samadhiya](https://www.linkedin.com/in/amogh-samadhiya-8890b82b8/)
+* 💼 **Availability**: *Open to remote Backend / ML Engineering internships and opportunities.*
+
