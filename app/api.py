@@ -48,10 +48,10 @@ async def lifespan(app: FastAPI):
         # Check default paths
         tiny_path = os.path.join("checkpoints_tiny", "best_model.pt")
         small_path = os.path.join("checkpoints", "best_model.pt")
-        if os.path.exists(tiny_path):
-            checkpoint_path = tiny_path
-        elif os.path.exists(small_path):
+        if os.path.exists(small_path):
             checkpoint_path = small_path
+        elif os.path.exists(tiny_path):
+            checkpoint_path = tiny_path
 
     # 2. Try loading the model engine
     if checkpoint_path and os.path.exists(checkpoint_path):

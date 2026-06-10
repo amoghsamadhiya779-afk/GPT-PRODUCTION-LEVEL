@@ -37,8 +37,8 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000").rstrip("/")
 def get_standalone_engine():
     """Load the model directly into Streamlit memory as a fallback."""
     paths = [
-        os.path.join("checkpoints_tiny", "best_model.pt"),
         os.path.join("checkpoints", "best_model.pt"),
+        os.path.join("checkpoints_tiny", "best_model.pt"),
     ]
     checkpoint_path = None
     for path in paths:
@@ -125,28 +125,28 @@ def inject_custom_styles(theme: str):
     if theme == "dark":
         css_vars = """
         :root {
-            --bg-base: #030712;
-            --bg-surface: rgba(17, 24, 39, 0.45);
-            --bg-card: rgba(15, 23, 42, 0.55);
-            --border-primary: rgba(255, 255, 255, 0.08);
-            --border-hover: rgba(255, 255, 255, 0.15);
+            --bg-base: #0a0b10;
+            --bg-surface: rgba(17, 24, 39, 0.4);
+            --bg-card: rgba(15, 23, 42, 0.5);
+            --border-primary: rgba(255, 255, 255, 0.06);
+            --border-hover: rgba(255, 255, 255, 0.12);
             --text-primary: #f9fafb;
             --text-secondary: #9ca3af;
             --text-muted: #6b7280;
-            --accent-primary: #6366f1;
-            --accent-glow: rgba(99, 102, 241, 0.15);
-            --accent-secondary: #38bdf8;
-            --sidebar-bg: rgba(10, 15, 30, 0.6);
-            --star-color: #ffffff;
-            --radial-glow: radial-gradient(circle at 50% 50%, rgba(30, 27, 75, 0.4) 0%, rgba(3, 7, 18, 0) 70%);
+            --accent-primary: #4f46e5;
+            --accent-glow: rgba(79, 70, 229, 0.12);
+            --accent-secondary: #0ea5e9;
+            --sidebar-bg: rgba(5, 7, 12, 0.7);
+            --star-color: rgba(255, 255, 255, 0.85);
+            --radial-glow: radial-gradient(circle at 50% 30%, rgba(30, 27, 75, 0.45) 0%, rgba(10, 11, 16, 0) 70%);
         }
         """
     else:  # light theme
         css_vars = """
         :root {
             --bg-base: #f8fafc;
-            --bg-surface: rgba(255, 255, 255, 0.7);
-            --bg-card: rgba(255, 255, 255, 0.85);
+            --bg-surface: rgba(255, 255, 255, 0.75);
+            --bg-card: rgba(255, 255, 255, 0.9);
             --border-primary: rgba(15, 23, 42, 0.06);
             --border-hover: rgba(15, 23, 42, 0.12);
             --text-primary: #0f172a;
@@ -155,9 +155,9 @@ def inject_custom_styles(theme: str):
             --accent-primary: #4f46e5;
             --accent-glow: rgba(79, 70, 229, 0.08);
             --accent-secondary: #0284c7;
-            --sidebar-bg: rgba(241, 245, 249, 0.75);
-            --star-color: rgba(79, 70, 229, 0.2);
-            --radial-glow: radial-gradient(circle at 50% 50%, rgba(224, 231, 255, 0.5) 0%, rgba(248, 250, 252, 0) 70%);
+            --sidebar-bg: rgba(241, 245, 249, 0.8);
+            --star-color: rgba(79, 70, 229, 0.35);
+            --radial-glow: radial-gradient(circle at 50% 30%, rgba(224, 231, 255, 0.6) 0%, rgba(248, 250, 252, 0) 70%);
         }
         """
 
@@ -186,7 +186,7 @@ def inject_custom_styles(theme: str):
             height: 100vh;
             z-index: -2;
             pointer-events: none;
-            opacity: 0.6;
+            opacity: 0.5;
         }}
         
         #stars {{
@@ -224,31 +224,46 @@ def inject_custom_styles(theme: str):
             backdrop-filter: blur(20px) !important;
             border-right: 1px solid var(--border-primary) !important;
         }}
-        section[data-testid="stSidebar"] .stMarkdown {{
-            padding-right: 1rem;
+        
+        /* Sliders Override (Vercel Style) */
+        div[data-testid="stWidgetLabel"] p {{
+            font-size: 11px !important;
+            color: var(--text-muted) !important;
+            font-weight: 600 !important;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 2px !important;
         }}
         
-        /* Sliders Override */
-        div[data-testid="stWidgetLabel"] p {{
-            font-size: 13px !important;
-            color: var(--text-secondary) !important;
-            font-weight: 500 !important;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+        div[data-testid="stSlider"] [data-baseweb="slider"] > div {{
+            background-color: var(--border-primary) !important;
+            height: 4px !important;
         }}
-        .stSlider [data-baseweb="slider"] {{
-            margin-top: 10px !important;
-        }}
-        .stSlider [data-testid="stThumbValue"] {{
+        div[data-testid="stSlider"] [data-baseweb="slider"] > div > div {{
             background-color: var(--accent-primary) !important;
-            color: #fff !important;
+            height: 4px !important;
+        }}
+        div[data-testid="stSlider"] [role="slider"] {{
+            background-color: var(--accent-primary) !important;
+            border: 2px solid var(--bg-base) !important;
+            width: 14px !important;
+            height: 14px !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+            transition: transform 0.1s ease !important;
+        }}
+        div[data-testid="stSlider"] [role="slider"]:hover {{
+            transform: scale(1.2) !important;
+        }}
+        div[data-testid="stSlider"] [data-testid="stThumbValue"] {{
+            background-color: var(--accent-primary) !important;
+            color: #ffffff !important;
             border-radius: 4px !important;
             font-size: 11px !important;
             padding: 2px 6px !important;
         }}
-        
+
         /* Input Areas Override */
-        textarea {{
+        div[data-testid="stTextArea"] textarea {{
             background-color: var(--bg-surface) !important;
             border: 1px solid var(--border-primary) !important;
             border-radius: 12px !important;
@@ -256,9 +271,11 @@ def inject_custom_styles(theme: str):
             font-size: 15px !important;
             padding: 16px !important;
             transition: all 0.3s ease !important;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.05) !important;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.03) !important;
+            font-family: inherit !important;
+            line-height: 1.6 !important;
         }}
-        textarea:focus {{
+        div[data-testid="stTextArea"] textarea:focus {{
             border-color: var(--accent-primary) !important;
             box-shadow: 0 0 15px var(--accent-glow) !important;
             outline: none !important;
@@ -286,70 +303,28 @@ def inject_custom_styles(theme: str):
             transform: translateY(1px) !important;
         }}
         
-        /* Tabs Styling */
-        div[data-testid="stTabBar"] {{
-            background-color: transparent !important;
-            border-bottom: 1px solid var(--border-primary) !important;
-            margin-bottom: 25px !important;
+        /* Toggles Switch Styling */
+        div[data-testid="stToggle"] [role="switch"] {{
+            background-color: var(--border-primary) !important;
         }}
-        button[data-baseweb="tab"] {{
-            font-family: 'Outfit', sans-serif !important;
-            color: var(--text-secondary) !important;
-            font-weight: 500 !important;
-            font-size: 15px !important;
-            padding: 12px 24px !important;
-            border-bottom: 2px solid transparent !important;
-            transition: all 0.3s ease !important;
-        }}
-        button[aria-selected="true"] {{
-            color: var(--text-primary) !important;
-            border-bottom-color: var(--accent-primary) !important;
-            font-weight: 600 !important;
+        div[data-testid="stToggle"] [role="switch"][aria-checked="true"] {{
+            background-color: var(--accent-primary) !important;
         }}
 
-        /* 4. Custom Component Class Styles */
-        
-        /* Glassmorphic Panels */
-        .glass-panel {{
-            background: var(--bg-card);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--border-primary);
-            border-radius: 16px;
-            padding: 24px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
-            transition: border-color 0.3s ease, box-shadow 0.3s ease;
-            margin-bottom: 20px;
+        /* 4. Native Container overrides to create Glassmorphic Cards */
+        div[data-testid="stVerticalBlockBorderWrapper"] {{
+            background: var(--bg-card) !important;
+            backdrop-filter: blur(20px) !important;
+            -webkit-backdrop-filter: blur(20px) !important;
+            border: 1px solid var(--border-primary) !important;
+            border-radius: 16px !important;
+            padding: 24px !important;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05) !important;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease !important;
+            margin-bottom: 20px !important;
         }}
-        .glass-panel:hover {{
-            border-color: var(--border-hover);
-        }}
-
-        /* Navigation List sidebar */
-        .nav-item {{
-            display: flex;
-            align-items: center;
-            padding: 12px 16px;
-            border-radius: 8px;
-            color: var(--text-secondary);
-            font-weight: 500;
-            text-decoration: none;
-            transition: all 0.2s ease;
-            margin-bottom: 6px;
-            cursor: pointer;
-            border: 1px solid transparent;
-        }}
-        .nav-item:hover {{
-            color: var(--text-primary);
-            background: rgba(255, 255, 255, 0.03);
-            border-color: var(--border-primary);
-        }}
-        .nav-item.active {{
-            color: var(--text-primary);
-            background: var(--accent-glow);
-            border-color: var(--border-primary);
-            font-weight: 600;
-            box-shadow: inset 0 0 8px rgba(99,102,241,0.05);
+        div[data-testid="stVerticalBlockBorderWrapper"]:hover {{
+            border-color: var(--border-hover) !important;
         }}
         
         /* Telemetry Metrics */
@@ -406,33 +381,6 @@ def inject_custom_styles(theme: str):
             animation: fadeIn 0.4s ease-out;
         }}
 
-        /* Segmented buttons */
-        .seg-btn {{
-            display: inline-flex;
-            background: var(--bg-surface);
-            border: 1px solid var(--border-primary);
-            border-radius: 8px;
-            padding: 3px;
-            margin-bottom: 15px;
-        }}
-        .seg-option {{
-            padding: 6px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--text-secondary);
-            transition: all 0.2s ease;
-            border: none;
-            background: transparent;
-        }}
-        .seg-option.active {{
-            background: var(--bg-base);
-            color: var(--text-primary);
-            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-            font-weight: 600;
-        }}
-
         @keyframes fadeIn {{
             from {{ opacity: 0; transform: translateY(4px); }}
             to {{ opacity: 1; transform: translateY(0); }}
@@ -449,7 +397,7 @@ def inject_custom_styles(theme: str):
 
 inject_custom_styles(st.session_state.theme)
 
-# ─── Collapsible Custom Navigation Sidebar ───────────────────────────
+# ─── Custom Collapsible Sidebar Navigation ───────────────────────────
 st.sidebar.markdown(
     """
     <div style="padding: 10px 0 25px 0;">
@@ -482,10 +430,10 @@ with col_nav4:
 
 # Active Indicator in Sidebar
 nav_label = {
-    "generate": "🎮 Playground",
-    "analytics": "📊 Analytics",
-    "architecture": "🧱 Architecture",
-    "settings": "⚙️ Settings"
+    "generate": "Playground",
+    "analytics": "Analytics",
+    "architecture": "Architecture",
+    "settings": "Settings"
 }[st.session_state.nav_active]
 
 st.sidebar.markdown(
@@ -509,38 +457,46 @@ st.sidebar.markdown(
 )
 
 if app_mode == "api":
+    checkpoint_name = os.path.basename(model_metadata.get('checkpoint', 'None'))
+    if "checkpoint_tiny" in model_metadata.get('checkpoint', ''):
+        model_type_label = "Tiny (Gibberish Output)"
+    else:
+        model_type_label = "Official Pretrained GPT-2 (Coherent English)"
+
     st.sidebar.markdown(
         f"""
-        <div class="glass-panel" style="padding: 14px; margin-bottom: 15px; font-size: 13px; line-height: 1.6;">
-            <div><span style="color: var(--text-muted);">Serving status:</span> <strong style="color: #10b981;">🟢 Active</strong></div>
-            <div><span style="color: var(--text-muted);">Device hardware:</span> <strong>{model_metadata.get('device', 'cpu').upper()}</strong></div>
-            <div><span style="color: var(--text-muted);">Parameters size:</span> <strong>{model_metadata.get('parameters', 0):,}</strong></div>
-            <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><span style="color: var(--text-muted);">Checkpoint:</span> <strong title="{model_metadata.get('checkpoint', 'None')}">{os.path.basename(model_metadata.get('checkpoint', 'None'))}</strong></div>
+        <div style="padding: 12px; border-radius: 8px; border: 1px solid var(--border-primary); background: rgba(0,0,0,0.1); font-size: 13px; line-height: 1.6; color: var(--text-secondary);">
+            <div>Serving status: <strong style="color: #10b981;">🟢 Connected</strong></div>
+            <div>Model Type: <strong style="color: var(--text-primary);">{model_type_label}</strong></div>
+            <div>Device: <strong>{model_metadata.get('device', 'cpu').upper()}</strong></div>
+            <div>Parameters: <strong>{model_metadata.get('parameters', 0):,}</strong></div>
+            <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Checkpoint: <strong title="{model_metadata.get('checkpoint', 'None')}">{checkpoint_name}</strong></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 else:
+    # Standalone Standby Mode
     st.sidebar.markdown(
         f"""
-        <div class="glass-panel" style="padding: 14px; margin-bottom: 15px; font-size: 13px; line-height: 1.6;">
-            <div><span style="color: var(--text-muted);">Serving status:</span> <strong style="color: var(--text-muted);">🟡 Standalone</strong></div>
-            <div><span style="color: var(--text-muted);">Device hardware:</span> <strong>CPU (Streamlit)</strong></div>
-            <div><span style="color: var(--text-muted);">Parameters size:</span> <strong>{local_engine.parameter_count if local_engine else 0:,}</strong></div>
-            <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><span style="color: var(--text-muted);">Checkpoint:</span> <strong>Fallback Model</strong></div>
+        <div style="padding: 12px; border-radius: 8px; border: 1px solid var(--border-primary); background: rgba(0,0,0,0.1); font-size: 13px; line-height: 1.6; color: var(--text-secondary);">
+            <div>Serving status: <strong style="color: var(--text-muted);">🟡 Standalone Standby</strong></div>
+            <div>Device: <strong>CPU (Streamlit)</strong></div>
+            <div>Parameters: <strong>{local_engine.parameter_count if local_engine else 0:,}</strong></div>
+            <div>Checkpoint: <strong>Fallback Model</strong></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-# ─── Tab-like Navigation Views ───────────────────────────────────────
+# ─── Navigation Routing Views ────────────────────────────────────────
 active_view = st.session_state.nav_active
 
 # ─── VIEW 1: Generator Playground ────────────────────────────────────
 if active_view == "generate":
     st.markdown(
         """
-        <div style="margin-bottom: 30px;">
+        <div style="margin-bottom: 25px;">
             <h1 style="font-weight: 700; font-size: 36px; letter-spacing: -1px; margin: 0; color: var(--text-primary);">
                 Copilot Studio
             </h1>
@@ -556,112 +512,110 @@ if active_view == "generate":
     col_input, col_params = st.columns([2, 1])
 
     with col_input:
-        st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
-        st.markdown(
-            """
-            <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 10px;">
-                Input Prompt Context
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        prompt_text = st.text_area(
-            "Input Prompt",
-            value="Once upon a time",
-            height=140,
-            label_visibility="collapsed",
-            key="textarea_prompt",
-        )
-        
-        # Generation Trigger Button
-        generate_clicked = st.button("✨ Execute Inference Run", key="btn_run_gen")
-        st.markdown('</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 12px;">
+                    Input Prompt Context
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            prompt_text = st.text_area(
+                "Input Prompt",
+                value="Once upon a time",
+                height=140,
+                label_visibility="collapsed",
+                key="textarea_prompt",
+            )
+            
+            # Generation Trigger Button
+            generate_clicked = st.button("✨ Execute Inference Run", key="btn_run_gen")
 
         # Output Reveal Panel
         if generate_clicked:
             if not prompt_text.strip():
                 st.error("Please provide a valid prompt context.")
             else:
-                st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
-                st.markdown(
-                    """
-                    <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 15px;">
-                        Generation Stream & Stats
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                with st.container(border=True):
+                    st.markdown(
+                        """
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 15px;">
+                            Generation Stream & Stats
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
-                # Fetch settings from state to maintain consistency
-                max_new_tokens = st.session_state.get("set_max_tokens", 100)
-                temp = st.session_state.get("set_temp", 0.8)
-                top_k = st.session_state.get("set_top_k", 50)
-                use_cache = st.session_state.get("set_use_cache", True)
+                    # Fetch settings from state to maintain consistency
+                    max_new_tokens = st.session_state.get("set_max_tokens", 100)
+                    temp = st.session_state.get("set_temp", 0.8)
+                    top_k = st.session_state.get("set_top_k", 50)
+                    use_cache = st.session_state.get("set_use_cache", True)
 
-                # Loading Shimmer
-                with st.spinner("Decoding token tensors..."):
-                    try:
-                        if app_mode == "api":
-                            payload = {
-                                "prompt": prompt_text,
-                                "max_new_tokens": max_new_tokens,
-                                "temperature": temp,
-                                "top_k": top_k,
-                                "use_cache": use_cache,
-                            }
-                            res = requests.post(f"{BACKEND_URL}/generate", json=payload, timeout=60)
-                            if res.status_code == 200:
-                                results = res.json()
+                    # Loading Shimmer
+                    with st.spinner("Decoding token tensors..."):
+                        try:
+                            if app_mode == "api":
+                                payload = {
+                                    "prompt": prompt_text,
+                                    "max_new_tokens": max_new_tokens,
+                                    "temperature": temp,
+                                    "top_k": top_k,
+                                    "use_cache": use_cache,
+                                }
+                                res = requests.post(f"{BACKEND_URL}/generate", json=payload, timeout=60)
+                                if res.status_code == 200:
+                                    results = res.json()
+                                else:
+                                    raise Exception(res.json().get("detail", "API Error"))
                             else:
-                                raise Exception(res.json().get("detail", "API Error"))
-                        else:
-                            results = local_engine.generate(
-                                prompt=prompt_text,
-                                max_new_tokens=max_new_tokens,
-                                temperature=temp,
-                                top_k=top_k,
-                                use_cache=use_cache,
+                                results = local_engine.generate(
+                                    prompt=prompt_text,
+                                    max_new_tokens=max_new_tokens,
+                                    temperature=temp,
+                                    top_k=top_k,
+                                    use_cache=use_cache,
+                                )
+                            
+                            # Render Telemetry Details
+                            st.markdown(
+                                f"""
+                                <div class="telemetry-container">
+                                    <div class="telemetry-card">
+                                        <div class="telemetry-value">{results['time_taken_seconds']:.3f}s</div>
+                                        <div class="telemetry-label">Latency</div>
+                                    </div>
+                                    <div class="telemetry-card">
+                                        <div class="telemetry-value">{results['tokens_per_second']:.1f}</div>
+                                        <div class="telemetry-label">Tokens / Sec</div>
+                                    </div>
+                                    <div class="telemetry-card">
+                                        <div class="telemetry-value">{results['tokens_generated']}</div>
+                                        <div class="telemetry-label">Tokens Gen</div>
+                                    </div>
+                                    <div class="telemetry-card">
+                                        <div class="telemetry-value">{'ON' if use_cache else 'OFF'}</div>
+                                        <div class="telemetry-label">KV-Cache</div>
+                                    </div>
+                                </div>
+                                <div style="margin-top: 25px;"></div>
+                                """,
+                                unsafe_allow_html=True,
                             )
-                        
-                        # Render Telemetry Details
-                        st.markdown(
-                            f"""
-                            <div class="telemetry-container">
-                                <div class="telemetry-card">
-                                    <div class="telemetry-value">{results['time_taken_seconds']:.3f}s</div>
-                                    <div class="telemetry-label">Latency</div>
-                                </div>
-                                <div class="telemetry-card">
-                                    <div class="telemetry-value">{results['tokens_per_second']:.1f}</div>
-                                    <div class="telemetry-label">Tokens / Sec</div>
-                                </div>
-                                <div class="telemetry-card">
-                                    <div class="telemetry-value">{results['tokens_generated']}</div>
-                                    <div class="telemetry-label">Tokens Gen</div>
-                                </div>
-                                <div class="telemetry-card">
-                                    <div class="telemetry-value">{'ON' if use_cache else 'OFF'}</div>
-                                    <div class="telemetry-label">KV-Cache</div>
-                                </div>
-                            </div>
-                            <div style="margin-top: 25px;"></div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
 
-                        # Text streaming display
-                        st.markdown(
-                            f'<div class="output-card">{results["generated_text"]}</div>',
-                            unsafe_allow_html=True,
-                        )
+                            # Text display
+                            st.markdown(
+                                f'<div class="output-card">{results["generated_text"]}</div>',
+                                unsafe_allow_html=True,
+                            )
 
-                    except Exception as e:
-                        st.error(f"Inference run failed: {e}")
-                st.markdown('</div>', unsafe_allow_html=True)
+                        except Exception as e:
+                            st.error(f"Inference run failed: {e}")
         else:
             st.markdown(
                 """
-                <div class="glass-panel" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                <div style="padding: 40px; border-radius: 12px; border: 1px dashed var(--border-primary); text-align: center; color: var(--text-muted); font-size: 14px;">
                     Provide a seed prompt on the left and execute the run to see autoregressive token generation.
                 </div>
                 """,
@@ -669,37 +623,36 @@ if active_view == "generate":
             )
 
     with col_params:
-        st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
-        st.markdown(
-            """
-            <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 20px;">
-                Hyperparameters
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        
-        # Local settings variables mapped to session state
-        max_tokens = st.slider("Max Tokens", min_value=10, max_value=300, value=st.session_state.get("set_max_tokens", 100), step=10, key="set_max_tokens")
-        temp = st.slider("Temperature", min_value=0.0, max_value=1.5, value=st.session_state.get("set_temp", 0.8), step=0.1, key="set_temp")
-        top_k = st.slider("Top-K Limit", min_value=1, max_value=100, value=st.session_state.get("set_top_k", 50), step=5, key="set_top_k")
-        use_cache = st.toggle("Enable KV-Cache (Speedup)", value=st.session_state.get("set_use_cache", True), key="set_use_cache")
-        
-        st.markdown(
-            """
-            <div style="margin-top: 15px; font-size: 12px; color: var(--text-muted); line-height: 1.5;">
-                <strong>KV-Cache Note:</strong> Enabling caching maintains the Key and Value attention tensors in memory across steps, avoiding $O(N^2)$ recalculations.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 20px;">
+                    Hyperparameters
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            
+            # Local settings variables mapped to session state
+            max_tokens = st.slider("Max Tokens", min_value=10, max_value=300, value=st.session_state.get("set_max_tokens", 100), step=10, key="set_max_tokens")
+            temp = st.slider("Temperature", min_value=0.0, max_value=1.5, value=st.session_state.get("set_temp", 0.8), step=0.1, key="set_temp")
+            top_k = st.slider("Top-K Limit", min_value=1, max_value=100, value=st.session_state.get("set_top_k", 50), step=5, key="set_top_k")
+            use_cache = st.toggle("Enable KV-Cache (Speedup)", value=st.session_state.get("set_use_cache", True), key="set_use_cache")
+            
+            st.markdown(
+                """
+                <div style="margin-top: 15px; font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                    <strong>KV-Cache Note:</strong> Enabling caching maintains the Key and Value attention tensors in memory across steps, avoiding $O(N^2)$ recalculations.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 # ─── VIEW 2: Analytics ───────────────────────────────────────────────
 elif active_view == "analytics":
     st.markdown(
         """
-        <div style="margin-bottom: 30px;">
+        <div style="margin-bottom: 25px;">
             <h1 style="font-weight: 700; font-size: 36px; letter-spacing: -1px; margin: 0; color: var(--text-primary);">
                 Training Telemetry
             </h1>
@@ -714,68 +667,66 @@ elif active_view == "analytics":
     col_plot, col_meta = st.columns([2, 1])
 
     with col_plot:
-        st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
-        st.markdown(
-            """
-            <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 20px;">
-                Cross-Entropy Loss Progression
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 20px;">
+                    Cross-Entropy Loss Progression
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-        plot_loaded = False
-        if app_mode == "api":
-            try:
-                plot_res = requests.get(f"{BACKEND_URL}/training/plot", stream=True)
-                if plot_res.status_code == 200:
-                    img = Image.open(plot_res.raw)
-                    st.image(img, use_container_width=True)
-                    plot_loaded = True
-            except Exception:
-                pass
-                
-        if not plot_loaded:
-            paths = ["logs_tiny/loss.png", "logs/loss.png", "loss.png"]
-            for path in paths:
-                if os.path.exists(path):
-                    st.image(path, use_container_width=True)
-                    plot_loaded = True
-                    break
+            plot_loaded = False
+            if app_mode == "api":
+                try:
+                    plot_res = requests.get(f"{BACKEND_URL}/training/plot", stream=True)
+                    if plot_res.status_code == 200:
+                        img = Image.open(plot_res.raw)
+                        st.image(img, use_container_width=True)
+                        plot_loaded = True
+                except Exception:
+                    pass
+                    
+            if not plot_loaded:
+                paths = ["logs_tiny/loss.png", "logs/loss.png", "loss.png"]
+                for path in paths:
+                    if os.path.exists(path):
+                        st.image(path, use_container_width=True)
+                        plot_loaded = True
+                        break
 
-        if not plot_loaded:
-            st.info("No pre-training loss plot curves image found. Execute a training cycle to log parameters.")
-        st.markdown('</div>', unsafe_allow_html=True)
+            if not plot_loaded:
+                st.info("No pre-training loss plot curves image found. Execute a training cycle to log parameters.")
 
     with col_meta:
-        st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
-        st.markdown(
-            """
-            <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 20px;">
-                Dataset & Run Configurations
-            </div>
-            <div style="font-size: 14px; line-height: 1.7; color: var(--text-secondary);">
-                Pre-training was executed locally on <strong>Edith Wharton's "The Verdict"</strong>:
-                <ul style="margin-top: 8px; padding-left: 20px; color: var(--text-secondary);">
-                    <li>Character count: 20,479</li>
-                    <li>Tokenizer: OpenAI GPT-2 BPE</li>
-                    <li>Vocab limit: 50,257</li>
-                    <li>Context constraint: 256 tokens</li>
-                    <li>Warmup cycle: 5-20 steps</li>
-                    <li>Optimizers: AdamW (weight decay 0.1)</li>
-                </ul>
-                All training telemetry, including step metrics and model weights, are tracked and logged via MLflow.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 20px;">
+                    Dataset & Run Configurations
+                </div>
+                <div style="font-size: 14px; line-height: 1.7; color: var(--text-secondary);">
+                    Pre-training was executed locally on <strong>Edith Wharton's "The Verdict"</strong>:
+                    <ul style="margin-top: 8px; padding-left: 20px; color: var(--text-secondary);">
+                        <li>Character count: 20,479</li>
+                        <li>Tokenizer: OpenAI GPT-2 BPE</li>
+                        <li>Vocab limit: 50,257</li>
+                        <li>Context constraint: 256 tokens</li>
+                        <li>Warmup cycle: 5-20 steps</li>
+                        <li>Optimizers: AdamW (weight decay 0.1)</li>
+                    </ul>
+                    All training telemetry, including step metrics and model weights, are tracked and logged via MLflow.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 # ─── VIEW 3: Architecture ────────────────────────────────────────────
 elif active_view == "architecture":
     st.markdown(
         """
-        <div style="margin-bottom: 30px;">
+        <div style="margin-bottom: 25px;">
             <h1 style="font-weight: 700; font-size: 36px; letter-spacing: -1px; margin: 0; color: var(--text-primary);">
                 Model Architecture
             </h1>
@@ -790,60 +741,58 @@ elif active_view == "architecture":
     col_attn, col_layer = st.columns(2)
 
     with col_attn:
-        st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
-        st.markdown(
-            """
-            <h3 style="font-weight: 600; font-size: 18px; margin: 0 0 15px 0; color: var(--text-primary);">
-                Attention Flow & Caching
-            </h3>
-            <p style="font-size: 14px; line-height: 1.7; color: var(--text-secondary);">
-                Our custom <strong>MultiHeadAttention</strong> layer is built completely from scratch using standard PyTorch primitives.
-                It splits the embedding dimensions into parallel attention heads, projects Queries, Keys, and Values, and calculates dot-product attention scores.
-            </p>
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-primary); border-radius: 8px; padding: 15px; font-family: monospace; font-size: 12px; margin-top: 15px; color: var(--text-secondary);">
-                def forward(self, x, layer_past=None, use_cache=False):<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;# Projects Q, K, V for input x<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;keys = self.W_key(x)<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;queries = self.W_query(x)<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;values = self.W_value(x)<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;...<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;if layer_past is not None:<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;keys = torch.cat((past_k, keys), dim=-2)<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;values = torch.cat((past_v, values), dim=-2)
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(
+                """
+                <h3 style="font-weight: 600; font-size: 18px; margin: 0 0 15px 0; color: var(--text-primary);">
+                    Attention Flow & Caching
+                </h3>
+                <p style="font-size: 14px; line-height: 1.7; color: var(--text-secondary);">
+                    Our custom <strong>MultiHeadAttention</strong> layer is built completely from scratch using standard PyTorch primitives.
+                    It splits the embedding dimensions into parallel attention heads, projects Queries, Keys, and Values, and calculates dot-product attention scores.
+                </p>
+                <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-primary); border-radius: 8px; padding: 15px; font-family: monospace; font-size: 12px; margin-top: 15px; color: var(--text-secondary);">
+                    def forward(self, x, layer_past=None, use_cache=False):<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;# Projects Q, K, V for input x<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;keys = self.W_key(x)<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;queries = self.W_query(x)<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;values = self.W_value(x)<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;...<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;if layer_past is not None:<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;keys = torch.cat((past_k, keys), dim=-2)<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;values = torch.cat((past_v, values), dim=-2)
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     with col_layer:
-        st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
-        st.markdown(
-            """
-            <h3 style="font-weight: 600; font-size: 18px; margin: 0 0 15px 0; color: var(--text-primary);">
-                Normalization & Activations
-            </h3>
-            <p style="font-size: 14px; line-height: 1.7; color: var(--text-secondary);">
-                The architecture implements a <strong>Pre-LayerNorm</strong> structure, applying custom Layer Normalization prior to Multi-Head Attention and FFN layers.
-                This ensures stable gradient flow directly through residual connections. The activation blocks use a hand-implemented tanh-approximation of the <strong>GELU</strong> activation function matching the GPT-2 paper.
-            </p>
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-primary); border-radius: 8px; padding: 15px; font-family: monospace; font-size: 12px; margin-top: 15px; color: var(--text-secondary);">
-                # Tanh approximation of GELU<br>
-                def forward(self, x):<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;return 0.5 * x * (1 + torch.tanh(<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;torch.sqrt(2 / pi) * (x + 0.044715 * x^3)<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;))
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(
+                """
+                <h3 style="font-weight: 600; font-size: 18px; margin: 0 0 15px 0; color: var(--text-primary);">
+                    Normalization & Activations
+                </h3>
+                <p style="font-size: 14px; line-height: 1.7; color: var(--text-secondary);">
+                    The architecture implements a <strong>Pre-LayerNorm</strong> structure, applying custom Layer Normalization prior to Multi-Head Attention and FFN layers.
+                    This ensures stable gradient flow directly through residual connections. The activation blocks use a hand-implemented tanh-approximation of the <strong>GELU</strong> activation function matching the GPT-2 paper.
+                </p>
+                <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-primary); border-radius: 8px; padding: 15px; font-family: monospace; font-size: 12px; margin-top: 15px; color: var(--text-secondary);">
+                    # Tanh approximation of GELU<br>
+                    def forward(self, x):<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;return 0.5 * x * (1 + torch.tanh(<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;torch.sqrt(2 / pi) * (x + 0.044715 * x^3)<br>
+                    &nbsp;&nbsp;&nbsp;&nbsp;))
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 # ─── VIEW 4: Settings & Configuration ────────────────────────────────
 elif active_view == "settings":
     st.markdown(
         """
-        <div style="margin-bottom: 30px;">
+        <div style="margin-bottom: 25px;">
             <h1 style="font-weight: 700; font-size: 36px; letter-spacing: -1px; margin: 0; color: var(--text-primary);">
                 System Settings
             </h1>
@@ -855,51 +804,49 @@ elif active_view == "settings":
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 25px;">
-            Appearance & Serving Variables
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Segmented Button theme switcher using st.button logic
-    st.markdown(
-        f"""
-        <div style="font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-bottom: 10px;">
-            Select Interface Theme (Current: {st.session_state.theme.upper()})
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    col_theme1, col_theme2 = st.columns([1, 4])
-    with col_theme1:
-        if st.session_state.theme == "dark":
-            if st.button("☀️ Switch to Light"):
-                st.session_state.theme = "light"
-                st.rerun()
-        else:
-            if st.button("🌑 Switch to Dark"):
-                st.session_state.theme = "dark"
-                st.rerun()
-
-    st.markdown(
-        """
-        <div style="margin-top: 35px; border-top: 1px solid var(--border-primary); padding-top: 25px;">
-            <div style="font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px;">
-                Active serving URL
+    with st.container(border=True):
+        st.markdown(
+            """
+            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 25px;">
+                Appearance & Serving Variables
             </div>
-            <div style="font-size: 13px; font-family: monospace; padding: 12px; border-radius: 6px; background: rgba(0,0,0,0.02); border: 1px solid var(--border-primary); display: inline-block; color: var(--text-secondary);">
-                BACKEND_URL: """ + BACKEND_URL + """
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            f"""
+            <div style="font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-bottom: 12px;">
+                Select Interface Theme (Current: {st.session_state.theme.upper()})
             </div>
-            <div style="margin-top: 12px; font-size: 12px; color: var(--text-muted);">
-                Modify the BACKEND_URL environment variable to repoint the Streamlit dashboard to a different remote FastAPI server.
+            """,
+            unsafe_allow_html=True,
+        )
+
+        col_theme1, col_theme2 = st.columns([1, 4])
+        with col_theme1:
+            if st.session_state.theme == "dark":
+                if st.button("☀️ Light Mode"):
+                    st.session_state.theme = "light"
+                    st.rerun()
+            else:
+                if st.button("🌑 Dark Mode"):
+                    st.session_state.theme = "dark"
+                    st.rerun()
+
+        st.markdown(
+            """
+            <div style="margin-top: 35px; border-top: 1px solid var(--border-primary); padding-top: 25px;">
+                <div style="font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px;">
+                    Active Serving Endpoint URL
+                </div>
+                <div style="font-size: 13px; font-family: monospace; padding: 12px; border-radius: 6px; background: rgba(0,0,0,0.2); border: 1px solid var(--border-primary); display: inline-block; color: var(--text-secondary);">
+                    BACKEND_URL: """ + BACKEND_URL + """
+                </div>
+                <div style="margin-top: 12px; font-size: 12px; color: var(--text-muted);">
+                    Modify the BACKEND_URL environment variable to repoint the Streamlit dashboard to a different remote FastAPI server.
+                </div>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )

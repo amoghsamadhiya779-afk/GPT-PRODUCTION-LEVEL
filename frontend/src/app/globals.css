@@ -1,0 +1,167 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-elevated: var(--elevated);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+}
+
+:root {
+  --background: #FAFAFA;
+  --foreground: #09090B;
+  --surface: #FFFFFF;
+  --elevated: #F4F4F5;
+  
+  --card: #FFFFFF;
+  --card-foreground: #09090B;
+  --popover: #FFFFFF;
+  --popover-foreground: #09090B;
+  --primary: #09090B;
+  --primary-foreground: #FFFFFF;
+  --secondary: #27272A;
+  --secondary-foreground: #09090B;
+  --muted: #71717A;
+  --muted-foreground: #A1A1AA;
+  --accent: #09090B;
+  --accent-hover: #27272A;
+  --accent-foreground: #FFFFFF;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --error: #EF4444;
+  --destructive: #EF4444;
+  
+  --border: rgba(9,9,11,0.06);
+  --input: rgba(9,9,11,0.06);
+  --ring: #09090B;
+  --radius: 0.5rem; /* slightly tighter, premium radius */
+  
+  --font-sans: var(--font-inter);
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #09090B;
+  --sidebar-primary: #09090B;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #F4F4F5;
+  --sidebar-accent-foreground: #09090B;
+  --sidebar-border: rgba(9,9,11,0.06);
+  --sidebar-ring: #09090B;
+}
+
+.dark {
+  --background: #09090B;
+  --foreground: #FAFAFA;
+  --surface: #18181B;
+  --elevated: #27272A;
+  
+  --card: #18181B;
+  --card-foreground: #FAFAFA;
+  --popover: #18181B;
+  --popover-foreground: #FAFAFA;
+  --primary: #FAFAFA;
+  --primary-foreground: #09090B;
+  --secondary: #D4D4D8;
+  --secondary-foreground: #FAFAFA;
+  --muted: #71717A;
+  --muted-foreground: #52525B;
+  --accent: #FAFAFA;
+  --accent-hover: #E4E4E7;
+  --accent-foreground: #09090B;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --error: #EF4444;
+  --destructive: #EF4444;
+  
+  --border: rgba(255,255,255,0.06);
+  --input: rgba(255,255,255,0.06);
+  --ring: #FAFAFA;
+  
+  --sidebar: #18181B;
+  --sidebar-foreground: #FAFAFA;
+  --sidebar-primary: #FAFAFA;
+  --sidebar-primary-foreground: #09090B;
+  --sidebar-accent: #27272A;
+  --sidebar-accent-foreground: #FAFAFA;
+  --sidebar-border: rgba(255,255,255,0.06);
+  --sidebar-ring: #FAFAFA;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground transition-colors duration-500 font-sans;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(113, 113, 122, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(113, 113, 122, 0.4);
+}
+
+/* Accent Glow Utility */
+.shadow-accent-glow {
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.05);
+}
+
+/* Hover rotation animation for settings icon */
+.animate-spin-hover:hover {
+  transform: rotate(30deg);
+}
+.animate-spin-hover {
+  transition: transform 0.35s ease;
+}
