@@ -8,7 +8,7 @@ FROM python:3.10-slim
 # Set environment configurations
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
+ENV PORT=7860
 
 # Set workspace
 WORKDIR /app
@@ -32,7 +32,7 @@ COPY data/ /app/data/
 COPY configs/ /app/configs/
 
 # Expose server port (FastAPI defaults to 8000, Streamlit defaults to 8501)
-EXPOSE 8000
+EXPOSE 7860
 EXPOSE 8501
 
 # Default runtime command (can be overridden in docker-compose)

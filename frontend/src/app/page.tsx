@@ -284,7 +284,7 @@ export default function Home() {
     .pop()?.content;
 
   return (
-    <div className="flex w-screen h-screen overflow-hidden bg-background text-foreground transition-colors duration-500 font-sans">
+    <div className="flex w-full h-dvh overflow-hidden bg-background text-foreground transition-colors duration-500 font-sans">
       <ParticleBackground />
 
       {/* Collapsible Sidebar (Desktop) */}
@@ -323,11 +323,11 @@ export default function Home() {
                     <div className="px-3 mb-2 text-[10px] font-semibold text-muted uppercase tracking-wider">
                       Navigation
                     </div>
-                    {[
+                    {([
                       { id: "chat", name: "Playground Chat", icon: MessageSquare },
                       { id: "analytics", name: "Training Telemetry", icon: LineChart },
                       { id: "architecture", name: "Model Architecture", icon: Cpu },
-                    ].map((item) => {
+                    ] as const).map((item) => {
                       const isActive = currentNav === item.id;
                       const Icon = item.icon;
                       return (
