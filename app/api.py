@@ -53,6 +53,16 @@ async def lifespan(app: FastAPI):
             checkpoint_path = small_path
         elif os.path.exists(tiny_path):
             checkpoint_path = tiny_path
+        else:
+            # Checkpoint is missing! Let's download and build the GPT-2 Small checkpoint dynamically.
+            try:
+                logger.info("No checkpoint found. Dynamically loading/creating pretrained GPT-2 Small weights...")
+                from training.load_pretrained import main as load_weights
+                load_weights()
+                if os.path.exists(small_path):
+                    checkpoint_path = small_path
+            except Exception as e:
+                logger.error("Failed to dynamically load pretrained weights: %s", e)
 
     # 2. Try loading the model engine
     if checkpoint_path and os.path.exists(checkpoint_path):
