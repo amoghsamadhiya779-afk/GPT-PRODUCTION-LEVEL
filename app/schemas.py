@@ -29,6 +29,18 @@ class GenerationRequest(BaseModel):
         le=100, 
         description="Only sample from the top-k most probable tokens."
     )
+    top_p: float | None = Field(
+        default=None, 
+        ge=0.0, 
+        le=1.0, 
+        description="Cumulative probability threshold for Top-P sampling."
+    )
+    repetition_penalty: float = Field(
+        default=1.0, 
+        ge=1.0, 
+        le=2.0, 
+        description="Penalty parameter applied to previously generated tokens."
+    )
     use_cache: bool = Field(
         default=True,
         description="Whether to use key-value (KV) caching for fast inference."

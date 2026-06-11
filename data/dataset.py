@@ -84,3 +84,105 @@ def create_dataloader(
         num_workers=num_workers,
     )
     return dataloader
+
+
+class InstructionDataset(Dataset):
+    """Dataset for instruction finetuning with target loss masking.
+
+    Loads a JSON file containing instruction-response pairs (Alpaca style),
+    formats them into structured prompts, tokenizes them, and sets up
+    target labels where prompt tokens are masked with -100 to prevent computing gradients.
+    """
+
+    def __init__(
+        self,
+        data_path: str,
+        tokenizer,
+        max_length: int = 256,
+        ignore_index: int = -100,
+    ) -> None:
+        self.input_ids: list[Tensor] = []
+        self.labels: list[Tensor] = []
+
+        import json
+        with open(data_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        eos_token_id = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+
+        for item in data:
+            instruction = item.get("instruction", "")
+            input_text = item.get("input", "")
+            output = item.get("output", "")
+
+            # Format prompt text
+            if input_text:
+                prompt = (
+                    "Below is an instruction that describes a task, paired with an input that provides further context. "
+                    "Write a response that appropriately completes the request.\n\n"
+                    f"### Instruction:\n{instruction}\n\n### Input:\n{input_text}\n\n### Response:\n"
+                )
+            else:
+                prompt = (
+                    "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
+                    f"### Instruction:\n{instruction}\n\n### Response:\n"
+                )
+
+            # Tokenize prompt and response
+            prompt_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})
+            response_ids = tokenizer.encode(output, allowed_special={"<|endoftext|>"}) + [eos_token_id]
+
+            # Form full input sequence
+            input_sequence = prompt_ids + response_ids
+
+            # Truncate if it exceeds max_length
+            if len(input_sequence) > max_length:
+                input_sequence = input_sequence[:max_length]
+
+            # Pad if shorter than max_length
+            padding_len = max_length - len(input_sequence)
+            input_sequence_padded = input_sequence + [eos_token_id] * padding_len
+
+            # Calculate target labels (shifted by 1 for next-token prediction)
+            target = []
+            for i in range(len(input_sequence_padded) - 1):
+                next_token = input_sequence_padded[i + 1]
+                # Mask out prompt and padding tokens with ignore_index (-100)
+                if i + 1 < len(prompt_ids):
+                    target.append(ignore_index)
+                elif i + 1 < len(input_sequence):
+                    target.append(next_token)
+                else:
+                    target.append(ignore_index)
+
+            # Input is sequence[:-1], target is sequence[1:]
+            self.input_ids.append(torch.tensor(input_sequence_padded[:-1]))
+            self.labels.append(torch.tensor(target))
+
+    def __len__(self) -> int:
+        return len(self.input_ids)
+
+    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor]:
+        return self.input_ids[idx], self.labels[idx]
+
+
+def create_instruction_dataloader(
+    data_path: str,
+    batch_size: int = 4,
+    max_length: int = 256,
+    shuffle: bool = True,
+    drop_last: bool = False,
+    num_workers: int = 0,
+) -> DataLoader:
+    """Create a DataLoader for instruction finetuning."""
+    from model.tokenizer import GPT2Tokenizer
+    tokenizer = GPT2Tokenizer()
+    dataset = InstructionDataset(data_path, tokenizer, max_length)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        drop_last=drop_last,
+        num_workers=num_workers,
+    )
+    return dataloader

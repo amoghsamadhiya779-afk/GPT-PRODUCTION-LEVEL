@@ -6,6 +6,7 @@ from model.attention import MultiHeadAttention
 from model.layers import LayerNorm, GELU, FeedForward, TransformerBlock
 from model.gpt import GPTModel, generate, generate_text_simple, count_parameters
 from model.tokenizer import GPT2Tokenizer
+from model.lora import LoRALinear, inject_lora, get_lora_state_dict, mark_only_lora_as_trainable
 
 __all__ = [
     "GPTConfig",
@@ -21,4 +22,8 @@ __all__ = [
     "generate_text_simple",
     "count_parameters",
     "GPT2Tokenizer",
+    "LoRALinear",
+    "inject_lora",
+    "get_lora_state_dict",
+    "mark_only_lora_as_trainable",
 ]

@@ -12,6 +12,7 @@ export interface ModelSettings {
   temperature: number;
   topK: number;
   topP: number;
+  repetitionPenalty: number;
   maxTokens: number;
   useCache: boolean;
 }
@@ -206,6 +207,27 @@ export default function SettingsPanel({
                   />
                   <span className="text-[11px] text-muted block leading-normal">
                     Limits sample vocabulary pool dynamically to cumulative probability threshold.
+                  </span>
+                </div>
+
+                {/* Repetition Penalty */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="font-medium text-secondary">Repetition Penalty</span>
+                    <span className="font-mono text-xs text-muted border border-border px-2 py-0.5 rounded bg-elevated/30">
+                      {settings.repetitionPenalty.toFixed(2)}
+                    </span>
+                  </div>
+                  <Slider
+                    value={[settings.repetitionPenalty]}
+                    onValueChange={(val) => updateSetting("repetitionPenalty", Array.isArray(val) ? val[0] : val)}
+                    min={1.0}
+                    max={2.0}
+                    step={0.05}
+                    className="py-2"
+                  />
+                  <span className="text-[11px] text-muted block leading-normal">
+                    Penalizes repeated tokens to discourage redundancy and loops.
                   </span>
                 </div>
 

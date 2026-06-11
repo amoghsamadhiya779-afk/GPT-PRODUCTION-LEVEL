@@ -40,10 +40,38 @@ class GPTInferenceEngine:
         # 3. Load Checkpoint
         checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
         self.model_config = checkpoint["model_config"]
+        is_lora = checkpoint.get("is_lora", False)
 
         # 4. Instantiate Model & Load State
         self.model = GPTModel(self.model_config)
-        self.model.load_state_dict(checkpoint["model_state_dict"])
+
+        if is_lora:
+            # Import inject_lora here to avoid circular dependency
+            from model.lora import inject_lora
+            
+            # Determine r and alpha, with fallback if not stored
+            lora_r = checkpoint.get("lora_r")
+            lora_alpha = checkpoint.get("lora_alpha")
+            
+            if lora_r is None:
+                # Find any lora_A key to check its shape
+                lora_A_keys = [k for k in checkpoint["model_state_dict"].keys() if "lora_A" in k]
+                if lora_A_keys:
+                    lora_r = checkpoint["model_state_dict"][lora_A_keys[0]].shape[0]
+                else:
+                    lora_r = 4  # Default fallback
+            
+            if lora_alpha is None:
+                lora_alpha = float(lora_r * 2)  # Typically alpha = 2 * r
+
+            # Inject the LoRA adapters
+            inject_lora(self.model, r=lora_r, alpha=lora_alpha, target_modules=["W_query", "W_value"])
+            
+            # Load LoRA state dict (strict=False since it only contains adapter weights)
+            self.model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        else:
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+
         self.model.to(self.device)
         self.model.eval()
 
@@ -58,6 +86,8 @@ class GPTInferenceEngine:
         max_new_tokens: int = 100,
         temperature: float = 0.8,
         top_k: int = 50,
+        top_p: float | None = None,
+        repetition_penalty: float = 1.0,
         use_cache: bool = True,
     ) -> dict:
         """Generate text from a prompt and return the output with latency statistics.
@@ -67,6 +97,8 @@ class GPTInferenceEngine:
             max_new_tokens: Tokens to generate.
             temperature: Sampling temperature.
             top_k: Top-k sampling limit.
+            top_p: Top-p sampling threshold.
+            repetition_penalty: Repetition penalty coefficient.
             use_cache: Whether to use KV-caching.
 
         Returns:
@@ -85,6 +117,8 @@ class GPTInferenceEngine:
             context_size=self.context_size,
             temperature=temperature,
             top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
             use_cache=use_cache,
         )
         

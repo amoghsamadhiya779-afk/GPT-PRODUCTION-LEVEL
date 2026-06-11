@@ -122,14 +122,14 @@ async def lifespan(app: FastAPI):
                     self.context_size = 256
                     self.parameter_count = count_parameters(self.model)
                 
-                def generate(self, prompt, max_new_tokens=50, temperature=0.8, top_k=50, use_cache=True):
+                def generate(self, prompt, max_new_tokens=50, temperature=0.8, top_k=50, top_p=None, repetition_penalty=1.0, use_cache=True):
                     input_ids = self.tokenizer.text_to_token_ids(prompt)
                     import time
                     start = time.perf_counter()
                     from model.gpt import generate as gpt_gen
                     output_ids = gpt_gen(
                         self.model, input_ids, max_new_tokens, self.context_size,
-                        temperature, top_k, use_cache=use_cache
+                        temperature, top_k, top_p, repetition_penalty, use_cache=use_cache
                     )
                     latency = time.perf_counter() - start
                     generated_text = self.tokenizer.token_ids_to_text(output_ids)
@@ -213,6 +213,8 @@ def generate_text(request: GenerationRequest):
             max_new_tokens=request.max_new_tokens,
             temperature=request.temperature,
             top_k=request.top_k,
+            top_p=request.top_p,
+            repetition_penalty=request.repetition_penalty,
             use_cache=request.use_cache,
         )
         return response_data

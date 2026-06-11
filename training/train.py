@@ -1,18 +1,15 @@
 # training/train.py
-"""GPT-2 pre-training pipeline with production-level features.
+"""GPT-2 pre-training and instruction finetuning pipeline.
 
 Features:
-    - AdamW optimizer with configurable weight decay
+    - Support for standard pretraining and instruction-following datasets
+    - Low-Rank Adaptation (LoRA) injection for parameter-efficient finetuning
+    - Gradient accumulation steps for large batch simulation
+    - Automatic Mixed Precision (AMP) FP16 training support
     - Cosine learning rate scheduling with linear warmup
-    - Gradient clipping (max_norm)
-    - Model checkpointing (saves best model by validation loss)
-    - Full training state saving for resume capability
-    - Structured logging
-    - Automatic device selection (CUDA -> CPU)
-
-Usage:
-    py training/train.py
-    py training/train.py --config configs/gpt2_small.yaml
+    - AdamW optimizer with weight decay
+    - Checkpoint loading and saving (saving only LoRA weights if enabled)
+    - MLflow experiment tracking integration
 """
 
 import argparse
@@ -21,6 +18,7 @@ import math
 import os
 import sys
 import time
+import json
 
 import torch
 import mlflow
@@ -31,7 +29,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.config import GPTConfig, TrainingConfig, load_config_from_yaml
 from model.gpt import GPTModel, count_parameters
 from model.tokenizer import GPT2Tokenizer
-from data.dataset import create_dataloader
+from model.lora import inject_lora, get_lora_state_dict
+from data.dataset import create_dataloader, create_instruction_dataloader
 from training.utils import (
     evaluate_model,
     generate_and_print_sample,
@@ -49,23 +48,10 @@ logger = logging.getLogger(__name__)
 
 
 def get_lr(step: int, warmup_steps: int, max_steps: int, max_lr: float, min_lr: float = 1e-6) -> float:
-    """Cosine learning rate schedule with linear warmup.
-
-    Args:
-        step: Current training step.
-        warmup_steps: Number of warmup steps.
-        max_steps: Total number of training steps.
-        max_lr: Peak learning rate after warmup.
-        min_lr: Minimum learning rate.
-
-    Returns:
-        Learning rate for the current step.
-    """
-    # Linear warmup
+    """Cosine learning rate schedule with linear warmup."""
     if step < warmup_steps:
         return max_lr * (step + 1) / warmup_steps
 
-    # Cosine decay
     if step >= max_steps:
         return min_lr
 
@@ -76,9 +62,16 @@ def get_lr(step: int, warmup_steps: int, max_steps: int, max_lr: float, min_lr: 
 def train(
     model_cfg: GPTConfig,
     train_cfg: TrainingConfig,
-    text_data: str,
+    data_path: str,
+    data_type: str = "pretrain",
+    checkpoint_path: str | None = None,
+    use_lora: bool = False,
+    lora_r: int = 4,
+    lora_alpha: float = 8.0,
+    accum_steps: int = 1,
+    use_amp: bool = False,
 ) -> None:
-    """Run the full GPT-2 pre-training pipeline."""
+    """Run the full GPT-2 pre-training or instruction finetuning pipeline."""
 
     # ─── Device ──────────────────────────────────────────────────
     torch.manual_seed(train_cfg.seed)
@@ -86,41 +79,93 @@ def train(
     logger.info("Using device: %s", device)
 
     # ─── Data ────────────────────────────────────────────────────
-    cfg_dict = model_cfg.to_dict()
-    train_ratio = 0.90
-    split_idx = int(train_ratio * len(text_data))
+    temp_train_path = "tests/temp_train.json"
+    temp_val_path = "tests/temp_val.json"
 
-    train_loader = create_dataloader(
-        text_data[:split_idx],
-        batch_size=train_cfg.batch_size,
-        max_length=model_cfg.context_length,
-        stride=model_cfg.context_length,
-        shuffle=True,
-        drop_last=True,
-    )
-    val_loader = create_dataloader(
-        text_data[split_idx:],
-        batch_size=train_cfg.batch_size,
-        max_length=model_cfg.context_length,
-        stride=model_cfg.context_length,
-        shuffle=False,
-        drop_last=False,
-    )
+    if data_type == "instruction":
+        logger.info("Loading instruction dataset from: %s", data_path)
+        with open(data_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        train_ratio = 0.90
+        split_idx = int(train_ratio * len(data))
+
+        os.makedirs("tests", exist_ok=True)
+        with open(temp_train_path, "w", encoding="utf-8") as f:
+            json.dump(data[:split_idx], f)
+        with open(temp_val_path, "w", encoding="utf-8") as f:
+            json.dump(data[split_idx:], f)
+
+        train_loader = create_instruction_dataloader(
+            temp_train_path,
+            batch_size=train_cfg.batch_size,
+            max_length=model_cfg.context_length,
+            shuffle=True,
+        )
+        val_loader = create_instruction_dataloader(
+            temp_val_path,
+            batch_size=train_cfg.batch_size,
+            max_length=model_cfg.context_length,
+            shuffle=False,
+        )
+    else:
+        logger.info("Loading raw text pretraining dataset from: %s", data_path)
+        with open(data_path, "r", encoding="utf-8") as f:
+            text_data = f.read()
+        train_ratio = 0.90
+        split_idx = int(train_ratio * len(text_data))
+
+        train_loader = create_dataloader(
+            text_data[:split_idx],
+            batch_size=train_cfg.batch_size,
+            max_length=model_cfg.context_length,
+            stride=model_cfg.context_length,
+            shuffle=True,
+            drop_last=True,
+        )
+        val_loader = create_dataloader(
+            text_data[split_idx:],
+            batch_size=train_cfg.batch_size,
+            max_length=model_cfg.context_length,
+            stride=model_cfg.context_length,
+            shuffle=False,
+            drop_last=False,
+        )
 
     logger.info("Train batches: %d | Val batches: %d", len(train_loader), len(val_loader))
 
     # ─── Model ───────────────────────────────────────────────────
-    model = GPTModel(cfg_dict)
+    cfg_dict = model_cfg.to_dict()
+    if checkpoint_path and os.path.exists(checkpoint_path):
+        logger.info("Loading starting model weights from checkpoint: %s", checkpoint_path)
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        cfg_dict = checkpoint["model_config"]
+        model_cfg = GPTConfig(**cfg_dict)
+        model = GPTModel(cfg_dict)
+        # Load weights with strict=False in case loading a LoRA-only checkpoint or mismatch
+        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+    else:
+        logger.info("Initializing model from scratch.")
+        model = GPTModel(cfg_dict)
+
+    # Inject LoRA weights if requested
+    if use_lora:
+        logger.info("Injecting LoRA adapters (rank=%d, alpha=%.1f) into attention projections...", lora_r, lora_alpha)
+        inject_lora(model, r=lora_r, alpha=lora_alpha, target_modules=["W_query", "W_value"])
+
     model.to(device)
     n_params = count_parameters(model)
-    logger.info("Model parameters: %s (%.1fM)", f"{n_params:,}", n_params / 1e6)
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info("Model parameters: %s (%.1fM) | Trainable: %s", 
+                f"{n_params:,}", n_params / 1e6, f"{trainable_params:,}")
 
     # Set up MLflow tracking
     os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
     mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
     mlflow.set_tracking_uri(mlflow_tracking_uri)
-    mlflow.set_experiment("GPT-2 Pretraining")
-    mlflow.start_run(run_name="gpt2-pretraining")
+    mlflow.set_experiment("GPT-2 Finetuning" if use_lora or data_type == "instruction" else "GPT-2 Pretraining")
+    if mlflow.active_run() is not None:
+        mlflow.end_run()
+    mlflow.start_run(run_name="gpt2-training")
 
     # Log config parameters
     mlflow.log_params({
@@ -140,15 +185,25 @@ def train(
         "warmup_steps": train_cfg.warmup_steps,
         "max_grad_norm": train_cfg.max_grad_norm,
         "seed": train_cfg.seed,
+        "data_type": data_type,
+        "use_lora": use_lora,
+        "lora_r": lora_r if use_lora else 0,
+        "accum_steps": accum_steps,
+        "use_amp": use_amp,
     })
     mlflow.log_param("parameter_count", n_params)
+    mlflow.log_param("trainable_parameter_count", trainable_params)
 
     # ─── Optimizer ───────────────────────────────────────────────
+    # Optimize only trainable parameters (critical when model is frozen for LoRA!)
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        [p for p in model.parameters() if p.requires_grad],
         lr=train_cfg.learning_rate,
         weight_decay=train_cfg.weight_decay,
     )
+
+    # Initialize AMP GradScaler
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda" and use_amp))
 
     # ─── Training Loop ───────────────────────────────────────────
     tokenizer = GPT2Tokenizer()
@@ -157,16 +212,19 @@ def train(
     global_step = -1
     best_val_loss = float("inf")
 
-    total_steps = len(train_loader) * train_cfg.num_epochs
+    total_steps = (len(train_loader) // accum_steps) * train_cfg.num_epochs
     os.makedirs(train_cfg.save_dir, exist_ok=True)
 
     logger.info("")
     logger.info("=" * 60)
-    logger.info("  STARTING GPT-2 PRE-TRAINING")
+    logger.info("  STARTING GPT-2 PIPELINE RUN")
     logger.info("=" * 60)
+    logger.info("  Task Type    : %s", data_type.upper())
     logger.info("  Epochs       : %d", train_cfg.num_epochs)
     logger.info("  Batch size   : %d", train_cfg.batch_size)
     logger.info("  Learning rate: %.2e", train_cfg.learning_rate)
+    logger.info("  Accumulation : %d steps", accum_steps)
+    logger.info("  AMP Enabled  : %s", use_amp and device.type == "cuda")
     logger.info("  Total steps  : %d", total_steps)
     logger.info("=" * 60)
     logger.info("")
@@ -177,9 +235,12 @@ def train(
         model.train()
         epoch_loss = 0.0
         epoch_steps = 0
+        optimizer.zero_grad()
 
-        for input_batch, target_batch in train_loader:
-            global_step += 1
+        for step_in_epoch, (input_batch, target_batch) in enumerate(train_loader):
+            # We scale step index relative to gradient accumulation
+            if step_in_epoch % accum_steps == 0:
+                global_step += 1
 
             # Update learning rate (cosine schedule with warmup)
             lr = get_lr(
@@ -191,56 +252,72 @@ def train(
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr
 
-            # Forward + backward
-            optimizer.zero_grad()
-            loss = calc_loss_batch(input_batch, target_batch, model, device)
-            loss.backward()
+            # Autocast forward pass
+            with torch.amp.autocast(device_type=device.type, enabled=(device.type == "cuda" and use_amp)):
+                loss = calc_loss_batch(input_batch, target_batch, model, device)
+                if accum_steps > 1:
+                    loss = loss / accum_steps
 
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.max_grad_norm)
-
-            optimizer.step()
+            # Backward pass with scaler
+            scaler.scale(loss).backward()
 
             tokens_seen += input_batch.numel()
-            epoch_loss += loss.item()
+            epoch_loss += loss.item() * accum_steps if accum_steps > 1 else loss.item()
             epoch_steps += 1
 
-            # Periodic evaluation
-            if global_step % train_cfg.eval_freq == 0:
-                train_loss, val_loss = evaluate_model(
-                    model, train_loader, val_loader, device, train_cfg.eval_iter
-                )
-                train_losses.append(train_loss)
-                val_losses.append(val_loss)
-                track_tokens_seen.append(tokens_seen)
-                logger.info(
-                    "Ep %d/%d (Step %06d) | Train Loss: %.4f | Val Loss: %.4f | LR: %.2e",
-                    epoch + 1, train_cfg.num_epochs, global_step,
-                    train_loss, val_loss, lr,
-                )
+            # Step optimizer after accumulating gradients
+            if (step_in_epoch + 1) % accum_steps == 0 or (step_in_epoch + 1) == len(train_loader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.max_grad_norm)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
 
-                # Log metrics to MLflow
-                mlflow.log_metric("train_loss", train_loss, step=global_step)
-                mlflow.log_metric("val_loss", val_loss, step=global_step)
-                mlflow.log_metric("learning_rate", lr, step=global_step)
+                # Periodic evaluation
+                if global_step % train_cfg.eval_freq == 0:
+                    train_loss, val_loss = evaluate_model(
+                        model, train_loader, val_loader, device, train_cfg.eval_iter
+                    )
+                    train_losses.append(train_loss)
+                    val_losses.append(val_loss)
+                    track_tokens_seen.append(tokens_seen)
+                    logger.info(
+                        "Ep %d/%d (Step %06d) | Train Loss: %.4f | Val Loss: %.4f | LR: %.2e",
+                        epoch + 1, train_cfg.num_epochs, global_step,
+                        train_loss, val_loss, lr,
+                    )
 
-                # Save best model
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    checkpoint = {
-                        "model_state_dict": model.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "epoch": epoch,
-                        "global_step": global_step,
-                        "val_loss": val_loss,
-                        "model_config": model_cfg.to_dict(),
-                    }
-                    path = os.path.join(train_cfg.save_dir, "best_model.pt")
-                    torch.save(checkpoint, path)
-                    logger.info("  -> Saved best model (val_loss=%.4f)", val_loss)
+                    # Log metrics to MLflow
+                    mlflow.log_metric("train_loss", train_loss, step=global_step)
+                    mlflow.log_metric("val_loss", val_loss, step=global_step)
+                    mlflow.log_metric("learning_rate", lr, step=global_step)
+
+                    # Save best model
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        checkpoint = {
+                            "model_state_dict": get_lora_state_dict(model) if use_lora else model.state_dict(),
+                            "optimizer_state_dict": optimizer.state_dict(),
+                            "epoch": epoch,
+                            "global_step": global_step,
+                            "val_loss": val_loss,
+                            "model_config": model_cfg.to_dict(),
+                            "is_lora": use_lora,
+                            "lora_r": lora_r if use_lora else None,
+                            "lora_alpha": lora_alpha if use_lora else None,
+                        }
+                        path = os.path.join(train_cfg.save_dir, "best_model.pt")
+                        torch.save(checkpoint, path)
+                        logger.info("  -> Saved best model (val_loss=%.4f)", val_loss)
 
         # End-of-epoch sample generation
         generate_and_print_sample(model, tokenizer, device, "Every effort moves you")
+
+    # Clean up temporary split files if generated
+    if data_type == "instruction":
+        for path in [temp_train_path, temp_val_path]:
+            if os.path.exists(path):
+                os.remove(path)
 
     # ─── Post-Training ───────────────────────────────────────────
     elapsed = time.time() - start_time
@@ -253,16 +330,19 @@ def train(
     logger.info("  Tokens seen    : %s", f"{tokens_seen:,}")
     logger.info("=" * 60)
 
-    # Save final model
+    # Save final model state dict
     final_path = os.path.join(train_cfg.save_dir, "final_model.pt")
     torch.save({
-        "model_state_dict": model.state_dict(),
+        "model_state_dict": get_lora_state_dict(model) if use_lora else model.state_dict(),
         "model_config": model_cfg.to_dict(),
+        "is_lora": use_lora,
+        "lora_r": lora_r if use_lora else None,
+        "lora_alpha": lora_alpha if use_lora else None,
     }, final_path)
     logger.info("Final model saved to %s", final_path)
     mlflow.log_artifact(final_path)
 
-    # Log best checkpoint to MLflow if it was saved
+    # Log best checkpoint
     best_path = os.path.join(train_cfg.save_dir, "best_model.pt")
     if os.path.exists(best_path):
         mlflow.log_artifact(best_path)
@@ -277,7 +357,7 @@ def train(
 
 
 def main() -> None:
-    # Ensure stdout and stderr use UTF-8 encoding to avoid Windows encoding crashes
+    # Ensure stdout/stderr UTF-8 compatibility on Windows
     if sys.platform == "win32":
         try:
             sys.stdout.reconfigure(encoding="utf-8")
@@ -286,7 +366,7 @@ def main() -> None:
             pass
 
     parser = argparse.ArgumentParser(
-        description="Pre-train a GPT-2 model from scratch.",
+        description="Pre-train or finetune a GPT-2 model.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -297,7 +377,46 @@ def main() -> None:
     parser.add_argument(
         "--data",
         default=os.path.join("data", "the-verdict.txt"),
-        help="Path to training text file.",
+        help="Path to training text or JSON file.",
+    )
+    parser.add_argument(
+        "--data_type",
+        choices=["pretrain", "instruction"],
+        default="pretrain",
+        help="Type of training: pretrain (raw text) or instruction (Alpaca JSON format).",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Path to starting checkpoint (.pt file) to resume or finetune.",
+    )
+    parser.add_argument(
+        "--lora",
+        action="store_true",
+        help="Inject LoRA adapters for parameter-efficient finetuning.",
+    )
+    parser.add_argument(
+        "--lora_r",
+        type=int,
+        default=4,
+        help="Rank for LoRA adapters.",
+    )
+    parser.add_argument(
+        "--lora_alpha",
+        type=float,
+        default=8.0,
+        help="Scaling alpha for LoRA adapters.",
+    )
+    parser.add_argument(
+        "--accum_steps",
+        type=int,
+        default=1,
+        help="Gradient accumulation steps to simulate larger batch sizes.",
+    )
+    parser.add_argument(
+        "--use_amp",
+        action="store_true",
+        help="Enable Automatic Mixed Precision (AMP) on CUDA device.",
     )
     args = parser.parse_args()
 
@@ -311,14 +430,20 @@ def main() -> None:
     # Load data
     if not os.path.exists(args.data):
         logger.error("Training data not found: %s", args.data)
-        logger.error("Run `py data/download.py` first to download training data.")
         sys.exit(1)
 
-    with open(args.data, "r", encoding="utf-8") as f:
-        text_data = f.read()
-    logger.info("Loaded training data: %d characters", len(text_data))
-
-    train(model_cfg, train_cfg, text_data)
+    train(
+        model_cfg=model_cfg,
+        train_cfg=train_cfg,
+        data_path=args.data,
+        data_type=args.data_type,
+        checkpoint_path=args.checkpoint,
+        use_lora=args.lora,
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        accum_steps=args.accum_steps,
+        use_amp=args.use_amp,
+    )
 
 
 if __name__ == "__main__":

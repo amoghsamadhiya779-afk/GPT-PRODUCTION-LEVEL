@@ -95,8 +95,28 @@ class GPTModel(nn.Module):
         return logits
 
 
-def _sample_next_token(logits: Tensor, temperature: float, top_k: int | None) -> Tensor:
+def _sample_next_token(
+    logits: Tensor,
+    temperature: float,
+    top_k: int | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float = 1.0,
+    idx: Tensor | None = None,
+) -> Tensor:
     """Helper function to sample the next token from logits."""
+    # Apply repetition penalty
+    if repetition_penalty > 1.0 and idx is not None:
+        for b in range(logits.shape[0]):
+            # Get unique tokens seen so far in this batch item
+            unique_tokens = torch.unique(idx[b])
+            token_logits = logits[b, unique_tokens]
+            penalized = torch.where(
+                token_logits >= 0,
+                token_logits / repetition_penalty,
+                token_logits * repetition_penalty,
+            )
+            logits[b, unique_tokens] = penalized
+
     # Top-k filtering
     if top_k is not None:
         top_logits, _ = torch.topk(logits, top_k)
@@ -106,6 +126,23 @@ def _sample_next_token(logits: Tensor, temperature: float, top_k: int | None) ->
             torch.tensor(float("-inf")).to(logits.device),
             logits,
         )
+
+    # Top-p (nucleus) filtering
+    if top_p is not None and top_p < 1.0:
+        sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+        sorted_probs = torch.softmax(sorted_logits, dim=-1)
+        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+        # Shift the indices to the right to keep the first token that exceeds the threshold
+        sorted_indices_to_remove = cumulative_probs > top_p
+        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+        sorted_indices_to_remove[..., 0] = False
+
+        # Scatter mask back to original logits shape
+        indices_to_remove = sorted_indices_to_remove.scatter(
+            dim=-1, index=sorted_indices, src=sorted_indices_to_remove
+        )
+        logits = logits.masked_fill(indices_to_remove, float("-inf"))
 
     # Temperature scaling + sampling
     if temperature > 0.0:
@@ -162,10 +199,12 @@ def generate(
     context_size: int,
     temperature: float = 0.0,
     top_k: int | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float = 1.0,
     eos_id: int | None = None,
     use_cache: bool = False,
 ) -> Tensor:
-    """Advanced text generation with temperature scaling, top-k sampling, and optional KV-Caching.
+    """Advanced text generation with temperature scaling, top-k/top-p sampling, and optional KV-Caching.
 
     Args:
         model: Trained GPTModel instance.
@@ -174,6 +213,8 @@ def generate(
         context_size: Maximum context window size.
         temperature: Sampling temperature (0.0 = greedy, higher = more random).
         top_k: If set, only sample from the top-k most probable tokens.
+        top_p: If set, only sample from tokens with cumulative probability below top_p.
+        repetition_penalty: Penalty factor applied to previously generated tokens.
         eos_id: End-of-sequence token ID (generation stops if encountered).
         use_cache: Whether to use key-value caching to speed up generation.
 
@@ -186,7 +227,9 @@ def generate(
         with torch.no_grad():
             logits, past_key_values = model(idx_cond, use_cache=True, past_key_values=None)
         logits = logits[:, -1, :]
-        idx_next = _sample_next_token(logits, temperature, top_k)
+        idx_next = _sample_next_token(
+            logits, temperature, top_k, top_p, repetition_penalty, idx
+        )
         
         # Append first generated token
         if eos_id is not None and idx_next.item() == eos_id:
@@ -206,7 +249,9 @@ def generate(
             with torch.no_grad():
                 logits, past_key_values = model(idx_next, use_cache=True, past_key_values=past_key_values)
             logits = logits[:, -1, :]
-            idx_next = _sample_next_token(logits, temperature, top_k)
+            idx_next = _sample_next_token(
+                logits, temperature, top_k, top_p, repetition_penalty, idx
+            )
 
             if eos_id is not None and idx_next.item() == eos_id:
                 break
@@ -221,7 +266,9 @@ def generate(
                 logits = model(idx_cond)
             logits = logits[:, -1, :]
 
-            idx_next = _sample_next_token(logits, temperature, top_k)
+            idx_next = _sample_next_token(
+                logits, temperature, top_k, top_p, repetition_penalty, idx
+            )
 
             if eos_id is not None and idx_next.item() == eos_id:
                 break

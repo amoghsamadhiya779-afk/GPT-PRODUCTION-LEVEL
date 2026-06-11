@@ -30,6 +30,7 @@ export default function Home() {
     temperature: 0.8,
     topK: 50,
     topP: 0.9,
+    repetitionPenalty: 1.0,
     maxTokens: 100,
     useCache: true,
   });
@@ -165,6 +166,8 @@ export default function Home() {
           max_new_tokens: settings.maxTokens,
           temperature: settings.temperature,
           top_k: settings.topK,
+          top_p: settings.topP,
+          repetition_penalty: settings.repetitionPenalty,
           use_cache: settings.useCache,
         };
 
