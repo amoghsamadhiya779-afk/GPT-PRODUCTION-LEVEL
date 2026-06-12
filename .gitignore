@@ -20,6 +20,7 @@ env/
 *.pt
 checkpoints/
 checkpoints_tiny/
+models/
 
 # Training outputs
 logs/
@@ -30,7 +31,6 @@ loss.png
 # Data
 data/*.txt
 !data/download.py
-data/llm_classification/
 
 # IDE
 .vscode/

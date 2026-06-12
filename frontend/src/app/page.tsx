@@ -26,7 +26,7 @@ export default function Home() {
   const [currentNav, setCurrentNav] = useState<"chat" | "analytics" | "architecture">("chat");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [settings, setSettings] = useState<ModelSettings>({
-    model: "gpt-local",
+    model: "gpt-2-small",
     temperature: 0.8,
     topK: 50,
     topP: 0.9,
@@ -171,7 +171,6 @@ export default function Home() {
           repetition_penalty: settings.repetitionPenalty,
           use_cache: settings.useCache,
           web_search: settings.webSearch || false,
-          backend: settings.model,
         };
 
         const res = await fetch(`${BACKEND_URL}/generate`, {

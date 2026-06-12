@@ -310,6 +310,17 @@ def train(
                         torch.save(checkpoint, path)
                         logger.info("  -> Saved best model (val_loss=%.4f)", val_loss)
 
+                        # Copy to models directory
+                        models_dir = "models"
+                        os.makedirs(models_dir, exist_ok=True)
+                        models_path = os.path.join(models_dir, "best_model.pt")
+                        try:
+                            import shutil
+                            shutil.copy2(path, models_path)
+                            logger.info("  -> Copied best model to %s", models_path)
+                        except Exception as e:
+                            logger.warning("Failed to copy best model to %s: %s", models_path, e)
+
         # End-of-epoch sample generation
         generate_and_print_sample(model, tokenizer, device, "Every effort moves you")
 
@@ -340,6 +351,17 @@ def train(
         "lora_alpha": lora_alpha if use_lora else None,
     }, final_path)
     logger.info("Final model saved to %s", final_path)
+
+    # Copy final model to models directory
+    models_dir = "models"
+    os.makedirs(models_dir, exist_ok=True)
+    models_final_path = os.path.join(models_dir, "final_model.pt")
+    try:
+        import shutil
+        shutil.copy2(final_path, models_final_path)
+        logger.info("Final model copied to %s", models_final_path)
+    except Exception as e:
+        logger.warning("Failed to copy final model to %s: %s", models_final_path, e)
     mlflow.log_artifact(final_path)
 
     # Log best checkpoint

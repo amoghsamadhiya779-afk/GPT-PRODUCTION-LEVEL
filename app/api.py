@@ -37,68 +37,6 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8")
     except AttributeError:
         pass
-
-
-# Globally cached deepseek local pipeline
-_deepseek_local_pipeline = None
-
-def get_deepseek_local_pipeline():
-    global _deepseek_local_pipeline
-    if _deepseek_local_pipeline is None:
-        logger.info("Initializing local DeepSeek Hugging Face pipeline...")
-        import torch
-        from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
-        
-        model_name = "deepseek-ai/deepseek-llm-7b-chat"
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name, 
-            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32, 
-            device_map="auto" if torch.cuda.is_available() else None
-        )
-        model.generation_config = GenerationConfig.from_pretrained(model_name)
-        model.generation_config.pad_token_id = model.generation_config.eos_token_id
-        
-        _deepseek_local_pipeline = (tokenizer, model)
-    return _deepseek_local_pipeline
-
-
-def generate_deepseek_local(
-    prompt: str,
-    max_new_tokens: int = 100,
-    temperature: float = 0.8,
-) -> dict:
-    import time
-    tokenizer, model = get_deepseek_local_pipeline()
-    
-    messages = [
-        {"role": "user", "content": prompt}
-    ]
-    input_tensor = tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt")
-    
-    start_time = time.perf_counter()
-    with torch.no_grad():
-        outputs = model.generate(
-            input_tensor.to(model.device), 
-            max_new_tokens=max_new_tokens,
-            do_sample=True if temperature > 0.0 else False,
-            temperature=temperature if temperature > 0.0 else 1.0,
-        )
-    latency = time.perf_counter() - start_time
-    
-    generated_text = tokenizer.decode(outputs[0][input_tensor.shape[1]:], skip_special_tokens=True)
-    num_generated = outputs.shape[1] - input_tensor.shape[1]
-    tokens_per_second = num_generated / latency if latency > 0 else 0.0
-    
-    return {
-        "prompt": prompt,
-        "generated_text": prompt + " " + generated_text,
-        "tokens_generated": num_generated,
-        "time_taken_seconds": latency,
-        "tokens_per_second": tokens_per_second,
-    }
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Context manager for FastAPI application startup and shutdown lifecycle events."""
@@ -284,22 +222,15 @@ def generate_text(request: GenerationRequest):
                     "Response:"
                 )
 
-        if request.backend == "deepseek-local":
-            response_data = generate_deepseek_local(
-                prompt=prompt_text,
-                max_new_tokens=request.max_new_tokens,
-                temperature=request.temperature,
-            )
-        else:
-            response_data = app.state.engine.generate(
-                prompt=prompt_text,
-                max_new_tokens=request.max_new_tokens,
-                temperature=request.temperature,
-                top_k=request.top_k,
-                top_p=request.top_p,
-                repetition_penalty=request.repetition_penalty,
-                use_cache=request.use_cache,
-            )
+        response_data = app.state.engine.generate(
+            prompt=prompt_text,
+            max_new_tokens=request.max_new_tokens,
+            temperature=request.temperature,
+            top_k=request.top_k,
+            top_p=request.top_p,
+            repetition_penalty=request.repetition_penalty,
+            use_cache=request.use_cache,
+        )
         
         # If RAG was used, extract only the generated answer
         if request.web_search and sources:

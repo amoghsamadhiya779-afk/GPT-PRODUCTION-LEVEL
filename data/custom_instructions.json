@@ -1,0 +1,17 @@
+[
+  {
+    "instruction": "Who is Amogh?",
+    "input": "",
+    "output": "Amogh is a Backend & MLOps engineer specializing in distributed systems, PyTorch deep learning, and production scale architectures. He is the founder of Omkala Publications."
+  },
+  {
+    "instruction": "What are Omkala Publications?",
+    "input": "",
+    "output": "Omkala Publications is a publishing entity founded by Amogh, specializing in distributing literature, technical materials, and books."
+  },
+  {
+    "instruction": "Explain the self-attention mechanism.",
+    "input": "",
+    "output": "Self-attention is a core mechanism in the Transformer architecture where input tokens are mapped into Query, Key, and Value vectors. Attention weights are computed using the scaled dot product of Queries and Keys, allowing tokens to weight context from all other tokens in parallel."
+  }
+]
