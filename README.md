@@ -1,4 +1,13 @@
 
+---
+title: GPT From Scratch
+emoji: 🚀
+colorFrom: gray
+colorTo: gray
+sdk: docker
+pinned: false
+---
+
 # GPT-2 From Scratch: Serving API & Streamlit Playground
 
 This project is a production-level, decoder-only transformer language model built entirely from scratch using PyTorch primitives, complete with a REST serving layer, containerized UI dashboard, and experiment tracking.
