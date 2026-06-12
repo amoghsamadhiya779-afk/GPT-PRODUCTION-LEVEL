@@ -30,6 +30,7 @@ loss.png
 # Data
 data/*.txt
 !data/download.py
+data/llm_classification/
 
 # IDE
 .vscode/

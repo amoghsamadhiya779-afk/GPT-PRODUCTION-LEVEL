@@ -49,6 +49,10 @@ class GenerationRequest(BaseModel):
         default=False,
         description="Whether to fetch context from web search (RAG) to guide generation."
     )
+    backend: str = Field(
+        default="gpt-local",
+        description="The generation backend to use: 'gpt-local' or 'deepseek-local'."
+    )
 
 
 class GenerationResponse(BaseModel):

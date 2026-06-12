@@ -48,8 +48,8 @@ export default function SettingsPanel({
   };
 
   const models = [
-    { id: "gpt-2-small", name: "GPT-2 Small (124M)", icon: Cpu, desc: "Pre-trained weights" },
-    { id: "gpt-2-tiny", name: "GPT-2 Tiny (13M)", icon: Zap, desc: "Fast demo checkpoint" },
+    { id: "gpt-local", name: "Scratch GPT-2 (Local)", icon: Cpu, desc: "Scratch-built model" },
+    { id: "deepseek-local", name: "DeepSeek 7B (Local)", icon: Zap, desc: "Local HF transformers" },
   ];
 
   return (

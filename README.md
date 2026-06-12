@@ -89,6 +89,35 @@ Token 3: [T3] -> Projects K3, V3 -> Attends Q3 to [K1+K2+K3, V1+V2+V3] -> Caches
 
 ---
 
+## Sequence Classification & DeepSeek-7B Integration
+
+This project includes a complete pipeline to download the Kaggle competition dataset `llm-classification-finetuning` (Chatbot Arena Human Preference battles), train sequence classifiers on top of our scratch GPT-2 or Hugging Face models, and dynamically serve alternative backends.
+
+### 1. Kaggle Dataset Downloader
+An automated dataset downloader fetches the Chatbot Arena battles dataset via the Kaggle API and extracts it to local storage:
+```bash
+py data/download_kaggle.py
+```
+*Note: The `data/llm_classification/` directory is ignored by `.gitignore` to guarantee datasets are never pushed to GitHub.*
+
+### 2. Sequence Classifier Head
+The `GPTClassificationModel` wraps the base `GPTModel`, extracts the representation of the last token in the sequence (respecting the causal block structure), and passes it to a linear projection classifier to predict three human preference classes (0 = Model A, 1 = Model B, 2 = Tie).
+
+### 3. Classifier Fine-Tuning Pipeline
+A dedicated classification trainer supports fine-tuning custom models (with LoRA or classifier-head freezing) or pretrained Hugging Face models (like DeepSeek 7B) using PEFT/QLoRA, mixed precision, and gradient accumulation:
+```bash
+py training/train_classifier.py --data data/llm_classification/train.csv --lora
+```
+
+### 4. serving & UI Integration
+The FastAPI serving backend dynamically routes text generation based on the `backend` field in the request:
+- `gpt-local`: Caches and runs the scratch-built GPT-2 model.
+- `deepseek-local`: Caches and runs the local `deepseek-ai/deepseek-llm-7b-chat` via Hugging Face.
+
+The Next.js settings panel provides a selector to switch between these backends on the fly.
+
+---
+
 ## Project Structure
 
 ```
@@ -109,17 +138,21 @@ GPT-PRODUCTION-LEVEL/
 │   ├── attention.py            # Causal Multi-Head Attention (with KV-Cache)
 │   ├── layers.py               # LayerNorm, GELU, FeedForward, TransformerBlock
 │   ├── gpt.py                  # GPTModel + KV-cached generation utilities
+│   ├── classification.py       # Custom sequence classification head
 │   └── tokenizer.py            # tiktoken BPE wrapper
 │
 ├── training/                   # Model pre-training
 │   ├── __init__.py
 │   ├── train.py                # Pre-training pipeline integrated with MLflow
+│   ├── train_classifier.py     # General classification fine-tuning pipeline
 │   └── utils.py                # Loss calculation, evaluation, plotting
 │
 ├── data/                       # Data loader & preprocessing
 │   ├── __init__.py
 │   ├── dataset.py              # GPTDataset sliding window dataloader
-│   └── download.py             # Download utility
+│   ├── download.py             # Download utility
+│   ├── download_kaggle.py      # Kaggle dataset downloader
+│   └── classification_dataset.py # Preference classification dataset parser
 │
 ├── app/                        # Inference serving & user interfaces
 │   ├── __init__.py
@@ -132,7 +165,8 @@ GPT-PRODUCTION-LEVEL/
 └── tests/                      # Pytest unit testing suite
     ├── __init__.py
     ├── test_model.py           # Model shapes, mask properties, and KV-cache equivalence
-    └── test_tokenizer.py       # Tokenizer encoding & decoding round-trip tests
+    ├── test_tokenizer.py       # Tokenizer encoding & decoding round-trip tests
+    └── test_classifier.py      # Classification dataloader, model, and training tests
 ```
 
 ---
