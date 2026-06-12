@@ -15,6 +15,7 @@ export interface ModelSettings {
   repetitionPenalty: number;
   maxTokens: number;
   useCache: boolean;
+  webSearch?: boolean;
 }
 
 interface SettingsPanelProps {
@@ -240,6 +241,18 @@ export default function SettingsPanel({
                   <Switch
                     checked={settings.useCache}
                     onCheckedChange={(val) => updateSetting("useCache", val)}
+                  />
+                </div>
+
+                {/* Web Search Toggle */}
+                <div className="flex items-center justify-between p-3 rounded-xl border border-border bg-elevated/10">
+                  <div>
+                    <div className="text-sm font-medium text-secondary">Web Search (RAG)</div>
+                    <div className="text-[11px] text-muted">Retrieves real-time facts from web search to guide generation.</div>
+                  </div>
+                  <Switch
+                    checked={settings.webSearch || false}
+                    onCheckedChange={(val) => updateSetting("webSearch", val)}
                   />
                 </div>
               </div>

@@ -45,6 +45,10 @@ class GenerationRequest(BaseModel):
         default=True,
         description="Whether to use key-value (KV) caching for fast inference."
     )
+    web_search: bool = Field(
+        default=False,
+        description="Whether to fetch context from web search (RAG) to guide generation."
+    )
 
 
 class GenerationResponse(BaseModel):
@@ -54,3 +58,7 @@ class GenerationResponse(BaseModel):
     tokens_generated: int = Field(..., description="Number of new tokens generated.")
     time_taken_seconds: float = Field(..., description="Latency of the generation request in seconds.")
     tokens_per_second: float = Field(..., description="Generation speed in tokens/second.")
+    sources: list[dict] | None = Field(
+        default=None,
+        description="List of search result sources used for RAG context."
+    )

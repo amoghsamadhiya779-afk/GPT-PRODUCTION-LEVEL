@@ -208,8 +208,24 @@ def generate_text(request: GenerationRequest):
         )
 
     try:
+        prompt_text = request.prompt
+        sources = None
+        
+        if request.web_search:
+            from app.search import web_search
+            sources = web_search(prompt_text, max_results=3)
+            if sources:
+                context_str = "\n".join([f"- {res['snippet']}" for res in sources])
+                prompt_text = (
+                    "Context from Web Search:\n"
+                    f"{context_str}\n\n"
+                    "Write a factual response using the context if helpful:\n"
+                    f"Prompt: {request.prompt}\n\n"
+                    "Response:"
+                )
+
         response_data = app.state.engine.generate(
-            prompt=request.prompt,
+            prompt=prompt_text,
             max_new_tokens=request.max_new_tokens,
             temperature=request.temperature,
             top_k=request.top_k,
@@ -217,6 +233,16 @@ def generate_text(request: GenerationRequest):
             repetition_penalty=request.repetition_penalty,
             use_cache=request.use_cache,
         )
+        
+        # If RAG was used, extract only the generated answer
+        if request.web_search and sources:
+            gen_text = response_data["generated_text"]
+            if "Response:" in gen_text:
+                answer = gen_text.split("Response:")[-1].strip()
+                response_data["generated_text"] = request.prompt + " " + answer
+            response_data["prompt"] = request.prompt
+            
+        response_data["sources"] = sources
         return response_data
     except Exception as e:
         logger.error("Generation error: %s", e)

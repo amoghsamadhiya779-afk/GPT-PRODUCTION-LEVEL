@@ -16,6 +16,7 @@ export interface Message {
   tokensPerSecond?: number;
   tokensGenerated?: number;
   useCache?: boolean;
+  sources?: { title: string; snippet: string; link: string }[] | null;
 }
 
 interface ChatWindowProps {
@@ -141,6 +142,34 @@ export default function ChatWindow({ messages, isGenerating }: ChatWindowProps) 
                         <span>Tokens: <strong>{message.tokensGenerated}</strong></span>
                         <span className="text-border">•</span>
                         <span>KV-Cache: <strong className={message.useCache ? "text-accent" : "text-muted"}>{message.useCache ? "ON" : "OFF"}</strong></span>
+                      </div>
+                    )}
+
+                    {/* Web Search Sources */}
+                    {!isUser && !message.isStreaming && message.sources && message.sources.length > 0 && (
+                      <div className="mt-2.5 p-3 rounded-xl border border-border/40 bg-elevated/15 text-left space-y-2 w-full">
+                        <h4 className="text-[10.5px] font-semibold text-accent flex items-center gap-1.5 uppercase tracking-wider select-none">
+                          <Sparkles className="w-3.5 h-3.5 text-accent animate-pulse" />
+                          Retrieved Search Sources
+                        </h4>
+                        <div className="grid grid-cols-1 gap-2 mt-1.5">
+                          {message.sources.map((src, idx) => (
+                            <a
+                              key={idx}
+                              href={src.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block p-2.5 rounded-lg border border-border/30 bg-surface/20 hover:bg-surface/55 hover:border-accent/40 transition-all duration-200 group"
+                            >
+                              <div className="text-[11.5px] font-semibold text-primary group-hover:text-accent transition-colors truncate">
+                                {src.title}
+                              </div>
+                              <div className="text-[10.5px] text-secondary/80 leading-relaxed line-clamp-2 mt-0.5">
+                                {src.snippet}
+                              </div>
+                            </a>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>

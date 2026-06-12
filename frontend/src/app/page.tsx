@@ -33,6 +33,7 @@ export default function Home() {
     repetitionPenalty: 1.0,
     maxTokens: 100,
     useCache: true,
+    webSearch: false,
   });
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -169,6 +170,7 @@ export default function Home() {
           top_p: settings.topP,
           repetition_penalty: settings.repetitionPenalty,
           use_cache: settings.useCache,
+          web_search: settings.webSearch || false,
         };
 
         const res = await fetch(`${BACKEND_URL}/generate`, {
@@ -237,6 +239,7 @@ export default function Home() {
                           tokensPerSecond: result.tokens_per_second,
                           tokensGenerated: result.tokens_generated,
                           useCache: settings.useCache,
+                          sources: result.sources || null,
                         }
                       : m
                   ),
