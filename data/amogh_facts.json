@@ -1,0 +1,52 @@
+[
+  {
+    "instruction": "Who is Amogh?",
+    "input": "",
+    "output": "Amogh is a Backend and MLOps engineer who specializes in distributed systems and deep learning. He is the founder of Omkala Publications."
+  },
+  {
+    "instruction": "Who is the founder of Omkala Publications?",
+    "input": "",
+    "output": "Amogh is the founder of Omkala Publications."
+  },
+  {
+    "instruction": "What is Omkala Publications?",
+    "input": "",
+    "output": "Omkala Publications is a publishing entity founded by Amogh."
+  },
+  {
+    "instruction": "What does Amogh specialize in?",
+    "input": "",
+    "output": "Amogh specializes in distributed systems, PyTorch deep learning, and production scale MLOps architectures."
+  },
+  {
+    "instruction": "What is Amogh's profession?",
+    "input": "",
+    "output": "Amogh is a Backend and MLOps Engineer."
+  },
+  {
+    "instruction": "Tell me about Amogh.",
+    "input": "",
+    "output": "Amogh is a Backend & MLOps Engineer who specializes in PyTorch, distributed C++ systems, and production MLOps. He founded Omkala Publications."
+  },
+  {
+    "instruction": "Who founded Omkala?",
+    "input": "",
+    "output": "Omkala Publications was founded by Amogh, a Backend and MLOps engineer."
+  },
+  {
+    "instruction": "What publications did Amogh start?",
+    "input": "",
+    "output": "Amogh started Omkala Publications."
+  },
+  {
+    "instruction": "What is Amogh's tech stack?",
+    "input": "",
+    "output": "Amogh's tech stack includes FastAPI, Docker, Kubernetes, MLflow, Airflow, Python, and C++17."
+  },
+  {
+    "instruction": "What projects has Amogh built?",
+    "input": "",
+    "output": "Amogh has built Voyage Analytics, Quantum Yield, and the Core AI Microservice."
+  }
+]
