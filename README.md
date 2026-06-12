@@ -81,32 +81,27 @@ Token 3: [T3] -> Projects K3, V3 -> Attends Q3 to [K1+K2+K3, V1+V2+V3] -> Caches
 
 ---
 
-## Sequence Classification & DeepSeek-7B Integration
+## Textbook & Prompts Pre-Training
 
-This project includes a complete pipeline to download the Kaggle competition dataset `llm-classification-finetuning` (Chatbot Arena Human Preference battles), train sequence classifiers on top of our scratch GPT-2 or Hugging Face models, and dynamically serve alternative backends.
+To pre-train the model, we consolidate mathematical and educational textbooks from the **Hugging Face Cosmopedia** dataset (subsets: `auto_math_text`, `khanacademy`, `openstax`) along with persona prompt templates from **Awesome ChatGPT Prompts** (`fka/prompts.chat`). 
 
-### 1. Kaggle Dataset Downloader
-An automated dataset downloader fetches the Chatbot Arena battles dataset via the Kaggle API and extracts it to local storage:
+We support two modes of training:
+
+### A. Local Pre-Compiled Corpus (Offline Mode)
+First, compile the datasets locally to generate a consolidated text file:
 ```bash
-py data/download_kaggle.py
+py data/download_cosmopedia.py
 ```
-*Note: The `data/llm_classification/` directory is ignored by `.gitignore` to guarantee datasets are never pushed to GitHub.*
-
-### 2. Sequence Classifier Head
-The `GPTClassificationModel` wraps the base `GPTModel`, extracts the representation of the last token in the sequence (respecting the causal block structure), and passes it to a linear projection classifier to predict three human preference classes (0 = Model A, 1 = Model B, 2 = Tie).
-
-### 3. Classifier Fine-Tuning Pipeline
-A dedicated classification trainer supports fine-tuning custom models (with LoRA or classifier-head freezing) or pretrained Hugging Face models (like DeepSeek 7B) using PEFT/QLoRA, mixed precision, and gradient accumulation:
+This generates `data/cosmopedia_math.txt`. Next, launch the training script:
 ```bash
-py training/train_classifier.py --data data/llm_classification/train.csv --lora
+py training/train.py --config configs/gpt2_small.yaml --data data/cosmopedia_math.txt
 ```
 
-### 4. serving & UI Integration
-The FastAPI serving backend dynamically routes text generation based on the `backend` field in the request:
-- `gpt-local`: Caches and runs the scratch-built GPT-2 model.
-- `deepseek-local`: Caches and runs the local `deepseek-ai/deepseek-llm-7b-chat` via Hugging Face.
-
-The Next.js settings panel provides a selector to switch between these backends on the fly.
+### B. On-the-Fly Streaming (Zero Local Storage Mode)
+If you want to train the model without downloading files locally (e.g. to avoid the 92 GB Cosmopedia download limit), you can stream data chunks directly from Hugging Face into memory. We use online split routing (modulus split) to divide the stream into 90% training and 10% validation batches:
+```bash
+py training/train.py --data stream_hf --data_type stream_hf --epochs 3 --batch_size 4 --steps_per_epoch 1000 --use_amp
+```
 
 ---
 
@@ -119,6 +114,8 @@ GPT-PRODUCTION-LEVEL/
 ├── .gitignore
 ├── Dockerfile                  # Builds multi-entrypoint serving image
 ├── docker-compose.yml          # Orchestrates backend & frontend
+├── notebooks/
+│   └── GPT_Finetuning_Colab.ipynb # Google Colab pipeline for training/inference
 │
 ├── configs/
 │   ├── gpt2_small.yaml         # GPT-2 Small configuration (124M parameters)
@@ -129,22 +126,21 @@ GPT-PRODUCTION-LEVEL/
 │   ├── config.py               # GPTConfig & TrainingConfig dataclasses
 │   ├── attention.py            # Causal Multi-Head Attention (with KV-Cache)
 │   ├── layers.py               # LayerNorm, GELU, FeedForward, TransformerBlock
-│   ├── gpt.py                  # GPTModel + KV-cached generation utilities
-│   ├── classification.py       # Custom sequence classification head
+│   ├── lora.py                 # Parameter-efficient adapters
+│   ├── gpt.py                  # GPTModel + cached generation utilities
 │   └── tokenizer.py            # tiktoken BPE wrapper
 │
 ├── training/                   # Model pre-training
 │   ├── __init__.py
-│   ├── train.py                # Pre-training pipeline integrated with MLflow
-│   ├── train_classifier.py     # General classification fine-tuning pipeline
+│   ├── train.py                # Pre-training & finetuning pipeline with MLflow
+│   ├── load_pretrained.py      # Pre-trained weights loader
 │   └── utils.py                # Loss calculation, evaluation, plotting
 │
 ├── data/                       # Data loader & preprocessing
 │   ├── __init__.py
-│   ├── dataset.py              # GPTDataset sliding window dataloader
-│   ├── download.py             # Download utility
-│   ├── download_kaggle.py      # Kaggle dataset downloader
-│   └── classification_dataset.py # Preference classification dataset parser
+│   ├── dataset.py              # GPTDataset & StreamedTextbookDataset loader
+│   ├── download.py             # Demo text download utility
+│   └── download_cosmopedia.py  # Cosmopedia & prompts dataset downloader
 │
 ├── app/                        # Inference serving & user interfaces
 │   ├── __init__.py
@@ -152,13 +148,17 @@ GPT-PRODUCTION-LEVEL/
 │   ├── inference.py            # Inference engine with time & speed benchmarks
 │   ├── schemas.py              # Pydantic request/response schemas
 │   ├── api.py                  # FastAPI server endpoints
+│   ├── search.py               # Vector search & retrieval modules
 │   └── dashboard.py            # Streamlit interactive UI dashboard
 │
 └── tests/                      # Pytest unit testing suite
     ├── __init__.py
+    ├── test_cosmopedia.py      # Cosmopedia loader and streamed training tests
+    ├── test_dataset.py         # Static sliding window and instruction tests
     ├── test_model.py           # Model shapes, mask properties, and KV-cache equivalence
+    ├── test_search.py          # Vector search utility verification tests
     ├── test_tokenizer.py       # Tokenizer encoding & decoding round-trip tests
-    └── test_classifier.py      # Classification dataloader, model, and training tests
+    └── test_train.py           # Integration dry-run training loop tests
 ```
 
 ---
@@ -167,15 +167,15 @@ GPT-PRODUCTION-LEVEL/
 
 The FastAPI backend exposes the following endpoints (default port: `8000`):
 
-### 1. Model Health check (`GET /health`)
+### 1. Model Health Check (`GET /health`)
 Returns the active serving status, loaded model weights path, parameter size, and hardware device.
 
 **Example Response**:
 ```json
 {
   "status": "active",
-  "checkpoint": "checkpoints_tiny/best_model.pt",
-  "parameters": 13294592,
+  "checkpoint": "checkpoints/best_model.pt",
+  "parameters": 124000000,
   "device": "cpu"
 }
 ```
@@ -237,8 +237,9 @@ venv\Scripts\activate
 # Install requirements
 pip install -r requirements.txt
 
-# Download data
+# Download local datasets (Optional)
 py data/download.py
+py data/download_cosmopedia.py
 
 # Run a fast training smoke test
 py training/train.py --config configs/gpt2_tiny.yaml
@@ -262,7 +263,7 @@ This starts:
 Checkpoints and logs directories are automatically mapped into the containers to load local weights.
 
 ### 3. Running Unit Tests
-To run unit tests verifying KV-cache mathematical equivalence and layer shapes:
+To run unit tests verifying KV-cache mathematical equivalence, streaming, and layer shapes:
 ```bash
 py -m pytest tests/ -v
 ```
@@ -275,16 +276,16 @@ In a FAANG production setting, serving models with FastAPI and Streamlit is repl
 
 ```
 [Web UI] ──► [API Gateway (Kong)] ──► [Redis Cache]
-                                            │
-                                    (Cache Miss)
-                                            │
-                                            ▼
-                                   [Triton/vLLM Cluster]
-                                 (Kubernetes HPA Replicas)
-                                            │
-                             ┌──────────────┴──────────────┐
-                             ▼                             ▼
-                      [PagedAttention]             [Continuous Batching]
+                                             │
+                                     (Cache Miss)
+                                             │
+                                             ▼
+                                    [Triton/vLLM Cluster]
+                                  (Kubernetes HPA Replicas)
+                                             │
+                              ┌──────────────┴──────────────┐
+                              ▼                             ▼
+                       [PagedAttention]             [Continuous Batching]
 ```
 
 ### 1. Serving Engine Optimization (Triton / vLLM)
@@ -319,4 +320,3 @@ Final-year B.Tech student specializing in ML Systems, Distributed Systems, and P
 * 📧 **Email**: [amoghsamadhiya779@gmail.com](mailto:amoghsamadhiya779@gmail.com)
 * 🔗 **LinkedIn**: [amogh-samadhiya](https://www.linkedin.com/in/amogh-samadhiya-8890b82b8/)
 * 💼 **Availability**: *Open to remote Backend / ML Engineering internships and opportunities.*
-
