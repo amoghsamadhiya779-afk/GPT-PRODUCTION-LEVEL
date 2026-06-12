@@ -65,6 +65,25 @@ def main():
             except Exception as e:
                 print(f"    [ERROR] Failed to load subset '{subset}': {e}")
 
+    # Load prompts from fka/prompts.chat using pandas as requested
+    print("Loading prompts from Hugging Face 'fka/prompts.chat' using pandas...")
+    try:
+        import pandas as pd
+        df = pd.read_csv("hf://datasets/fka/prompts.chat/prompts.csv")
+        prompts_count = 0
+        with open(output_path, "a", encoding="utf-8") as out_f:
+            for _, row in df.iterrows():
+                act = str(row.get("act", "")).strip()
+                prompt = str(row.get("prompt", "")).strip()
+                if act and prompt:
+                    text = f"Persona: {act}\nPrompt: {prompt}"
+                    out_f.write(text + "\n<|endoftext|>\n")
+                    prompts_count += 1
+                    merged_count += 1
+        print(f"    [OK] Loaded {prompts_count} samples from 'fka/prompts.chat'")
+    except Exception as e:
+        print(f"    [ERROR] Failed to load 'fka/prompts.chat' using pandas: {e}")
+
     print("\n" + "=" * 60)
     if merged_count > 0:
         file_size_mb = os.path.getsize(output_path) / (1024 * 1024)

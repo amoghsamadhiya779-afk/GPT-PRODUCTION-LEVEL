@@ -440,6 +440,18 @@ def main() -> None:
         action="store_true",
         help="Enable Automatic Mixed Precision (AMP) on CUDA device.",
     )
+    parser.add_argument(
+        "--epochs", "--num_epochs",
+        type=int,
+        default=None,
+        help="Override number of training epochs.",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=None,
+        help="Override training batch size.",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -448,6 +460,12 @@ def main() -> None:
     else:
         model_cfg = GPTConfig()
         train_cfg = TrainingConfig()
+
+    # Override config values if command line arguments are provided
+    if args.epochs is not None:
+        train_cfg.num_epochs = args.epochs
+    if args.batch_size is not None:
+        train_cfg.batch_size = args.batch_size
 
     # Load data
     if not os.path.exists(args.data):
