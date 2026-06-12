@@ -1,11 +1,3 @@
----
-title: GPT From Scratch
-emoji: 🚀
-colorFrom: gray
-colorTo: gray
-sdk: docker
-pinned: false
----
 
 # GPT-2 From Scratch: Serving API & Streamlit Playground
 
