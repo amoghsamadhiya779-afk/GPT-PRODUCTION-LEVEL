@@ -30,7 +30,7 @@ from model.config import GPTConfig, TrainingConfig, load_config_from_yaml
 from model.gpt import GPTModel, count_parameters
 from model.tokenizer import GPT2Tokenizer
 from model.lora import inject_lora, get_lora_state_dict
-from data.dataset import create_dataloader, create_instruction_dataloader
+from data.dataset import create_dataloader, create_instruction_dataloader, create_streamed_dataloader
 from training.utils import (
     evaluate_model,
     generate_and_print_sample,
@@ -70,6 +70,7 @@ def train(
     lora_alpha: float = 8.0,
     accum_steps: int = 1,
     use_amp: bool = False,
+    steps_per_epoch: int | None = None,
 ) -> None:
     """Run the full GPT-2 pre-training or instruction finetuning pipeline."""
 
@@ -81,8 +82,24 @@ def train(
     # ─── Data ────────────────────────────────────────────────────
     temp_train_path = "tests/temp_train.json"
     temp_val_path = "tests/temp_val.json"
+    is_streaming = (data_path == "stream_hf" or data_type == "stream_hf")
 
-    if data_type == "instruction":
+    if is_streaming:
+        logger.info("Initializing Hugging Face streamed datasets (on-the-fly Cosmopedia & prompts.chat)...")
+        tokenizer = GPT2Tokenizer()
+        train_loader = create_streamed_dataloader(
+            tokenizer=tokenizer,
+            batch_size=train_cfg.batch_size,
+            max_length=model_cfg.context_length,
+            split="train",
+        )
+        val_loader = create_streamed_dataloader(
+            tokenizer=tokenizer,
+            batch_size=train_cfg.batch_size,
+            max_length=model_cfg.context_length,
+            split="val",
+        )
+    elif data_type == "instruction":
         logger.info("Loading instruction dataset from: %s", data_path)
         with open(data_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -131,7 +148,12 @@ def train(
             drop_last=False,
         )
 
-    logger.info("Train batches: %d | Val batches: %d", len(train_loader), len(val_loader))
+    try:
+        train_len = len(train_loader)
+        val_len = len(val_loader)
+        logger.info("Train batches: %d | Val batches: %d", train_len, val_len)
+    except TypeError:
+        logger.info("Train batches: [STREAMING] | Val batches: [STREAMING]")
 
     # ─── Model ───────────────────────────────────────────────────
     cfg_dict = model_cfg.to_dict()
@@ -212,7 +234,12 @@ def train(
     global_step = -1
     best_val_loss = float("inf")
 
-    total_steps = (len(train_loader) // accum_steps) * train_cfg.num_epochs
+    if is_streaming:
+        if steps_per_epoch is None:
+            steps_per_epoch = 1000
+        total_steps = (steps_per_epoch // accum_steps) * train_cfg.num_epochs
+    else:
+        total_steps = (len(train_loader) // accum_steps) * train_cfg.num_epochs
     os.makedirs(train_cfg.save_dir, exist_ok=True)
 
     logger.info("")
@@ -238,6 +265,8 @@ def train(
         optimizer.zero_grad()
 
         for step_in_epoch, (input_batch, target_batch) in enumerate(train_loader):
+            if is_streaming and steps_per_epoch is not None and step_in_epoch >= steps_per_epoch * accum_steps:
+                break
             # We scale step index relative to gradient accumulation
             if step_in_epoch % accum_steps == 0:
                 global_step += 1
@@ -403,9 +432,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--data_type",
-        choices=["pretrain", "instruction"],
+        choices=["pretrain", "instruction", "stream_hf"],
         default="pretrain",
-        help="Type of training: pretrain (raw text) or instruction (Alpaca JSON format).",
+        help="Type of training: pretrain (raw text), instruction (Alpaca JSON format), or stream_hf (Hugging Face streaming).",
     )
     parser.add_argument(
         "--checkpoint",
@@ -452,6 +481,12 @@ def main() -> None:
         default=None,
         help="Override training batch size.",
     )
+    parser.add_argument(
+        "--steps_per_epoch",
+        type=int,
+        default=None,
+        help="Number of steps in a training epoch when streaming.",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -468,7 +503,7 @@ def main() -> None:
         train_cfg.batch_size = args.batch_size
 
     # Load data
-    if not os.path.exists(args.data):
+    if args.data != "stream_hf" and args.data_type != "stream_hf" and not os.path.exists(args.data):
         logger.error("Training data not found: %s", args.data)
         sys.exit(1)
 
@@ -483,6 +518,7 @@ def main() -> None:
         lora_alpha=args.lora_alpha,
         accum_steps=args.accum_steps,
         use_amp=args.use_amp,
+        steps_per_epoch=args.steps_per_epoch,
     )
 
 

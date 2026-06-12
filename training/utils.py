@@ -41,21 +41,30 @@ def calc_loss_loader(
 ) -> float:
     """Compute average cross-entropy loss across a DataLoader."""
     total_loss = 0.0
-    if len(data_loader) == 0:
+
+    # Handle IterableDataset where len() is not defined
+    has_len = True
+    try:
+        loader_len = len(data_loader)
+    except TypeError:
+        has_len = False
+        loader_len = None
+
+    if has_len and loader_len == 0:
         return float("nan")
 
-    if num_batches is None:
-        num_batches = len(data_loader)
-    else:
-        num_batches = min(num_batches, len(data_loader))
-
+    actual_num_batches = 0
     for i, (input_batch, target_batch) in enumerate(data_loader):
-        if i >= num_batches:
+        if num_batches is not None and i >= num_batches:
             break
         loss = calc_loss_batch(input_batch, target_batch, model, device)
         total_loss += loss.item()
+        actual_num_batches += 1
 
-    return total_loss / num_batches
+    if actual_num_batches == 0:
+        return float("nan")
+
+    return total_loss / actual_num_batches
 
 
 def evaluate_model(

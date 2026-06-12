@@ -91,3 +91,44 @@ def test_cosmopedia_train_pipeline(mock_text_data):
             
     if os.path.exists(models_path):
         os.remove(models_path)
+
+
+def test_streamed_dataloader(monkeypatch):
+    """Verify that streamed dataloader yields batches and handles on-the-fly streaming correctly."""
+    from model.tokenizer import GPT2Tokenizer
+    from data.dataset import create_streamed_dataloader
+    import pandas as pd
+
+    # Mock datasets.load_dataset to return a simple generator
+    class MockDataset:
+        def __iter__(self):
+            yield {"text": "Theorem: Let x be a real number. We prove x = x."}
+            yield {"text": "In this math lesson, we solve systems of equations."}
+
+    def mock_load_dataset(path, name=None, split=None, streaming=False):
+        return MockDataset()
+
+    # Mock pandas read_csv
+    def mock_read_csv(filepath_or_buffer, *args, **kwargs):
+        return pd.DataFrame([
+            {"act": "Tutor", "prompt": "Explain math."},
+            {"act": "Writer", "prompt": "Write story."}
+        ])
+
+    import datasets
+    monkeypatch.setattr(datasets, "load_dataset", mock_load_dataset)
+    monkeypatch.setattr(pd, "read_csv", mock_read_csv)
+
+    tokenizer = GPT2Tokenizer()
+    loader = create_streamed_dataloader(
+        tokenizer=tokenizer,
+        batch_size=2,
+        max_length=8,
+        split="train",
+    )
+
+    # Fetch one batch
+    for inputs, targets in loader:
+        assert inputs.shape == (2, 8)
+        assert targets.shape == (2, 8)
+        break

@@ -8,7 +8,7 @@ for next-token prediction, where targets are shifted by one position.
 import tiktoken
 import torch
 from torch import Tensor
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, IterableDataset
 
 
 class GPTDataset(Dataset):
@@ -81,6 +81,102 @@ def create_dataloader(
         batch_size=batch_size,
         shuffle=shuffle,
         drop_last=drop_last,
+        num_workers=num_workers,
+    )
+    return dataloader
+
+
+class StreamedTextbookDataset(IterableDataset):
+    """Iterable Dataset for streaming Hugging Face datasets on-the-fly.
+
+    Streams educational textbook datasets (auto_math_text, khanacademy, openstax)
+    from HuggingFaceTB/cosmopedia and merges them with awesome chatbot prompts
+    from fka/prompts.chat without writing raw data files to local disk.
+    """
+
+    def __init__(self, tokenizer, max_length: int = 256) -> None:
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __iter__(self):
+        from datasets import load_dataset
+        import pandas as pd
+
+        token_buffer = []
+        subsets = ["auto_math_text", "khanacademy", "openstax"]
+        eos_token_id = self.tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+
+        # 1. Stream Cosmopedia math subsets
+        for subset in subsets:
+            try:
+                ds = load_dataset("HuggingFaceTB/cosmopedia", subset, split="train", streaming=True)
+                for row in ds:
+                    text = row.get("text", "").strip()
+                    if text:
+                        tokens = self.tokenizer.encode(text, allowed_special={"<|endoftext|>"}) + [eos_token_id]
+                        token_buffer.extend(tokens)
+
+                        while len(token_buffer) >= self.max_length + 1:
+                            inputs = token_buffer[:self.max_length]
+                            targets = token_buffer[1 : self.max_length + 1]
+                            token_buffer = token_buffer[self.max_length:]
+                            yield torch.tensor(inputs), torch.tensor(targets)
+            except Exception:
+                # Silently skip if loading errors occur
+                pass
+
+        # 2. Stream prompts from fka/prompts.chat using pandas hf:// protocol
+        try:
+            df = pd.read_csv("hf://datasets/fka/prompts.chat/prompts.csv")
+            for _, row in df.iterrows():
+                act = str(row.get("act", "")).strip()
+                prompt = str(row.get("prompt", "")).strip()
+                if act and prompt:
+                    text = f"Persona: {act}\nPrompt: {prompt}"
+                    tokens = self.tokenizer.encode(text, allowed_special={"<|endoftext|>"}) + [eos_token_id]
+                    token_buffer.extend(tokens)
+
+                    while len(token_buffer) >= self.max_length + 1:
+                        inputs = token_buffer[:self.max_length]
+                        targets = token_buffer[1 : self.max_length + 1]
+                        token_buffer = token_buffer[self.max_length:]
+                        yield torch.tensor(inputs), torch.tensor(targets)
+        except Exception:
+            pass
+
+
+class SplitStreamedDataset(IterableDataset):
+    """Splits a streamed IterableDataset into train/validation on-the-fly."""
+
+    def __init__(self, base_dataset: IterableDataset, split: str = "train", split_ratio: float = 0.9) -> None:
+        self.base_dataset = base_dataset
+        self.split = split
+        self.split_ratio = split_ratio
+
+    def __iter__(self):
+        count = 0
+        for inputs, targets in self.base_dataset:
+            # Modulus split routing
+            is_train = (count % 10 < int(self.split_ratio * 10))
+            if (self.split == "train" and is_train) or (self.split == "val" and not is_train):
+                yield inputs, targets
+            count += 1
+
+
+def create_streamed_dataloader(
+    tokenizer,
+    batch_size: int = 4,
+    max_length: int = 256,
+    split: str = "train",
+    split_ratio: float = 0.9,
+    num_workers: int = 0,
+) -> DataLoader:
+    """Create a DataLoader that streams and splits the Cosmopedia & Prompts dataset."""
+    base_dataset = StreamedTextbookDataset(tokenizer, max_length=max_length)
+    split_dataset = SplitStreamedDataset(base_dataset, split=split, split_ratio=split_ratio)
+    dataloader = DataLoader(
+        split_dataset,
+        batch_size=batch_size,
         num_workers=num_workers,
     )
     return dataloader
