@@ -25,11 +25,31 @@ from model.tokenizer import GPT2Tokenizer
 
 
 def load_model(checkpoint_path: str, device: torch.device) -> GPTModel:
-    """Load a GPT model from a training checkpoint."""
+    """Load a GPT model from a training checkpoint, handling LoRA if present."""
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     cfg = checkpoint["model_config"]
     model = GPTModel(cfg)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    
+    is_lora = checkpoint.get("is_lora", False)
+    if is_lora:
+        from model.lora import inject_lora
+        lora_r = checkpoint.get("lora_r")
+        lora_alpha = checkpoint.get("lora_alpha")
+        if lora_r is None:
+            # Find any lora_A key to check its shape
+            lora_A_keys = [k for k in checkpoint["model_state_dict"].keys() if "lora_A" in k]
+            if lora_A_keys:
+                lora_r = checkpoint["model_state_dict"][lora_A_keys[0]].shape[0]
+            else:
+                lora_r = 4
+        if lora_alpha is None:
+            lora_alpha = float(lora_r * 2)
+            
+        inject_lora(model, r=lora_r, alpha=lora_alpha, target_modules=["W_query", "W_value"])
+        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+    else:
+        model.load_state_dict(checkpoint["model_state_dict"])
+        
     model.to(device)
     model.eval()
     return model
