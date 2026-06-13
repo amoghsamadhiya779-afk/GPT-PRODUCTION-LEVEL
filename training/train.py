@@ -487,6 +487,18 @@ def main() -> None:
         default=None,
         help="Number of steps in a training epoch when streaming.",
     )
+    parser.add_argument(
+        "--eval_freq",
+        type=int,
+        default=None,
+        help="Override evaluation frequency (every N steps).",
+    )
+    parser.add_argument(
+        "--eval_iter",
+        type=int,
+        default=None,
+        help="Override number of batches to evaluate.",
+    )
     args = parser.parse_args()
 
     # Load config
@@ -501,6 +513,10 @@ def main() -> None:
         train_cfg.num_epochs = args.epochs
     if args.batch_size is not None:
         train_cfg.batch_size = args.batch_size
+    if args.eval_freq is not None:
+        train_cfg.eval_freq = args.eval_freq
+    if args.eval_iter is not None:
+        train_cfg.eval_iter = args.eval_iter
 
     # Load data
     if args.data != "stream_hf" and args.data_type != "stream_hf" and not os.path.exists(args.data):

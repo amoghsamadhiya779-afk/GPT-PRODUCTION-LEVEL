@@ -25,8 +25,8 @@ training:
   weight_decay: 0.1          # AdamW weight decay
   warmup_steps: 20           # Linear warmup steps
   max_grad_norm: 1.0         # Gradient clipping threshold
-  eval_freq: 5               # Evaluate every N steps
-  eval_iter: 1               # Batches per evaluation
+  eval_freq: 500             # Evaluate every N steps
+  eval_iter: 10              # Batches per evaluation
   save_dir: checkpoints      # Checkpoint output directory
   log_dir: logs              # Logging output directory
   seed: 123                  # Random seed
