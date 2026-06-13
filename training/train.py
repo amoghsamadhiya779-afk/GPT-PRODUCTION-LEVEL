@@ -161,7 +161,11 @@ def train(
         logger.info("Loading starting model weights from checkpoint: %s", checkpoint_path)
         checkpoint = torch.load(checkpoint_path, map_location=device)
         cfg_dict = checkpoint["model_config"]
-        model_cfg = GPTConfig(**cfg_dict)
+        # Map drop_rate back to dropout for GPTConfig constructor compatibility
+        gpt_cfg_dict = cfg_dict.copy()
+        if "drop_rate" in gpt_cfg_dict and "dropout" not in gpt_cfg_dict:
+            gpt_cfg_dict["dropout"] = gpt_cfg_dict.pop("drop_rate")
+        model_cfg = GPTConfig(**gpt_cfg_dict)
         model = GPTModel(cfg_dict)
         # Load weights with strict=False in case loading a LoRA-only checkpoint or mismatch
         model.load_state_dict(checkpoint["model_state_dict"], strict=False)
