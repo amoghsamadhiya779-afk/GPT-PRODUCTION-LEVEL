@@ -107,6 +107,9 @@ class GPTInferenceEngine:
         # Tokenize seed prompt
         input_ids = self.tokenizer.text_to_token_ids(prompt).to(self.device)
 
+        # Get EOS token ID for early stopping
+        eos_id = self.tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+
         start_time = time.perf_counter()
         
         # Call generation pipeline
@@ -119,6 +122,7 @@ class GPTInferenceEngine:
             top_k=top_k,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
+            eos_id=eos_id,
             use_cache=use_cache,
         )
         

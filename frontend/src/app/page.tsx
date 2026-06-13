@@ -19,6 +19,7 @@ interface ChatSession {
   id: string;
   title: string;
   messages: Message[];
+  persona?: "Math Tutor" | "Physics Helper" | "General Assistant" | null;
 }
 
 export default function Home() {
@@ -47,7 +48,7 @@ export default function Home() {
 
   // Chat sessions state
   const [sessions, setSessions] = useState<ChatSession[]>([
-    { id: "1", title: "Once upon a time context", messages: [] },
+    { id: "1", title: "New Playground Session", messages: [], persona: null },
   ]);
   const [currentSessionId, setCurrentSessionId] = useState<string>("1");
 
@@ -92,12 +93,65 @@ export default function Home() {
   const currentSession = sessions.find((s) => s.id === currentSessionId) || sessions[0];
   const messages = currentSession?.messages || [];
 
+  const getWelcomeMessage = (persona: "Math Tutor" | "Physics Helper" | "General Assistant") => {
+    switch (persona) {
+      case "Math Tutor":
+        return (
+          "Hello! I am your Math Tutor. I specialize in algebra, geometry, calculus, and mathematical equations. Let's explore mathematical concepts together!\n\n" +
+          "Here are some prompts you can try to focus on what I have been trained on:\n" +
+          "- **'Explain the Pythagorean theorem'**\n" +
+          "- **'What is a derivative?'**\n" +
+          "- **'How do you solve linear equations?'**"
+        );
+      case "Physics Helper":
+        return (
+          "Hello! I am your Physics Helper. I focus on classical mechanics, kinematics, forces, and thermodynamics. Let's solve physical mathematics together!\n\n" +
+          "Here are some prompts you can try to focus on what I have been trained on:\n" +
+          "- **'What is Newton's second law?'**\n" +
+          "- **'Explain gravitational potential energy'**\n" +
+          "- **'How does speed relate to velocity?'**"
+        );
+      case "General Assistant":
+        return (
+          "Hello! I am your General Assistant. I can help you understand general math theories, numbers, and logic. Let's start learning!\n\n" +
+          "Here are some prompts you can try to focus on what I have been trained on:\n" +
+          "- **'Why is math important?'**\n" +
+          "- **'Explain the concept of infinity'**\n" +
+          "- **'What are prime numbers?'**"
+        );
+      default:
+        return "";
+    }
+  };
+
+  const handleSelectPersona = (persona: "Math Tutor" | "Physics Helper" | "General Assistant") => {
+    const welcomeMsg: Message = {
+      id: "welcome-" + Date.now(),
+      role: "assistant",
+      content: getWelcomeMessage(persona),
+    };
+    
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === currentSessionId
+          ? {
+              ...s,
+              persona: persona,
+              messages: [welcomeMsg],
+              title: `${persona} Session`,
+            }
+          : s
+      )
+    );
+  };
+
   const handleNewChat = () => {
     const newId = String(Date.now());
     const newSession: ChatSession = {
       id: newId,
       title: "New Playground Session",
       messages: [],
+      persona: null,
     };
     setSessions([newSession, ...sessions]);
     setCurrentSessionId(newId);
@@ -467,7 +521,13 @@ export default function Home() {
             </div>
 
             {/* Chat Workspace Message Window */}
-            <ChatWindow messages={messages} isGenerating={isGenerating} />
+            <ChatWindow 
+              messages={messages} 
+              isGenerating={isGenerating} 
+              persona={currentSession?.persona || null}
+              onSelectPersona={handleSelectPersona}
+              onSelectPrompt={handleSend}
+            />
 
             {/* Chat Workspace Fixed Bottom Composer */}
             <Composer

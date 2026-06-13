@@ -206,21 +206,36 @@ def generate_text(request: GenerationRequest):
         )
 
     try:
-        prompt_text = request.prompt
+        original_prompt = request.prompt
+        prompt_text = original_prompt
         sources = None
         
         if request.web_search:
             from app.search import web_search
-            sources = web_search(prompt_text, max_results=3)
+            sources = web_search(original_prompt, max_results=3)
             if sources:
                 context_str = "\n".join([f"- {res['snippet']}" for res in sources])
                 prompt_text = (
-                    "Context from Web Search:\n"
-                    f"{context_str}\n\n"
-                    "Write a factual response using the context if helpful:\n"
-                    f"Prompt: {request.prompt}\n\n"
-                    "Response:"
+                    "Below is an instruction that describes a task, paired with an input that provides further context. "
+                    "Write a response that appropriately completes the request.\n\n"
+                    f"### Instruction:\n{original_prompt}\n\n"
+                    f"### Input:\nWeb Search Context:\n{context_str}\n\n"
+                    "### Response:\n"
                 )
+            else:
+                prompt_text = (
+                    "Below is an instruction that describes a task. "
+                    "Write a response that appropriately completes the request.\n\n"
+                    f"### Instruction:\n{original_prompt}\n\n"
+                    "### Response:\n"
+                )
+        else:
+            prompt_text = (
+                "Below is an instruction that describes a task. "
+                "Write a response that appropriately completes the request.\n\n"
+                f"### Instruction:\n{original_prompt}\n\n"
+                "### Response:\n"
+            )
 
         response_data = app.state.engine.generate(
             prompt=prompt_text,
@@ -232,14 +247,22 @@ def generate_text(request: GenerationRequest):
             use_cache=request.use_cache,
         )
         
-        # If RAG was used, extract only the generated answer
-        if request.web_search and sources:
-            gen_text = response_data["generated_text"]
-            if "Response:" in gen_text:
-                answer = gen_text.split("Response:")[-1].strip()
-                response_data["generated_text"] = request.prompt + " " + answer
-            response_data["prompt"] = request.prompt
-            
+        # Unify response cleaning for instruction template
+        gen_text = response_data["generated_text"]
+        if "### Response:" in gen_text:
+            answer = gen_text.split("### Response:")[-1].strip()
+            # Remove EOS token if generated
+            answer = answer.replace("<|endoftext|>", "").strip()
+            response_data["generated_text"] = original_prompt + "\n\n" + answer
+        else:
+            # Fallback if tag is missing but starts with prompt_text
+            if gen_text.startswith(prompt_text):
+                clean_ans = gen_text[len(prompt_text):].strip().replace("<|endoftext|>", "")
+                response_data["generated_text"] = original_prompt + "\n\n" + clean_ans
+            else:
+                response_data["generated_text"] = gen_text.replace("<|endoftext|>", "").strip()
+                
+        response_data["prompt"] = original_prompt
         response_data["sources"] = sources
         return response_data
     except Exception as e:

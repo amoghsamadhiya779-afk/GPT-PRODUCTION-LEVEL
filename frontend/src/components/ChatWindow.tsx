@@ -3,7 +3,7 @@
 import React, { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useTheme } from "./ThemeProvider";
-import { Cpu, User, Sparkles, AlertTriangle } from "lucide-react";
+import { Cpu, User, Sparkles, AlertTriangle, GraduationCap, Atom, Compass } from "lucide-react";
 import Logo from "@/components/Logo";
 
 export interface Message {
@@ -22,9 +22,18 @@ export interface Message {
 interface ChatWindowProps {
   messages: Message[];
   isGenerating: boolean;
+  persona?: "Math Tutor" | "Physics Helper" | "General Assistant" | null;
+  onSelectPersona?: (persona: "Math Tutor" | "Physics Helper" | "General Assistant") => void;
+  onSelectPrompt?: (promptText: string) => void;
 }
 
-export default function ChatWindow({ messages, isGenerating }: ChatWindowProps) {
+export default function ChatWindow({ 
+  messages, 
+  isGenerating, 
+  persona, 
+  onSelectPersona, 
+  onSelectPrompt 
+}: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const { theme } = useTheme();
 
@@ -41,8 +50,8 @@ export default function ChatWindow({ messages, isGenerating }: ChatWindowProps) 
       {/* Container max-width 900px */}
       <div className="w-full max-w-[900px] flex-1 flex flex-col justify-between">
         {messages.length === 0 ? (
-          /* Landing State */
-          <div className="flex-1 flex flex-col items-center justify-center text-center py-20 px-4 select-none">
+          /* Landing State: Persona Selector */
+          <div className="flex-1 flex flex-col items-center justify-center py-10 px-4 select-none">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -55,44 +64,82 @@ export default function ChatWindow({ messages, isGenerating }: ChatWindowProps) 
               initial={{ y: 8, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.1, duration: 0.35 }}
-              className="text-2xl md:text-3xl font-semibold tracking-tight text-primary"
+              className="text-2xl md:text-3xl font-semibold tracking-tight text-primary text-center"
             >
-              GPT-2 Production Playground
+              Select a Persona to Start Learning
             </motion.h1>
             <motion.p
               initial={{ y: 8, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.2, duration: 0.35 }}
-              className="mt-3 text-sm md:text-base text-secondary max-w-lg leading-relaxed"
+              className="mt-3 text-sm md:text-base text-secondary max-w-lg leading-relaxed text-center"
             >
-              Inference playground executing directly on custom GPT-2 checkpoints built from scratch in PyTorch.
+              Choose a custom tutor persona. The model is fine-tuned to answer prompts inside these domains and recommend next steps.
             </motion.p>
             
-            {/* Quick Tips */}
+            {/* Persona Grid */}
             <motion.div
-              initial={{ y: 8, opacity: 0 }}
+              initial={{ y: 12, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.3, duration: 0.35 }}
-              className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-12 w-full max-w-2xl"
+              transition={{ delay: 0.3, duration: 0.4 }}
+              className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-10 w-full max-w-3xl"
             >
-              <div className="p-4 rounded-xl border border-border bg-elevated/15 text-left">
-                <h3 className="text-xs font-semibold text-primary flex items-center gap-1.5 uppercase tracking-wider">
-                  <Sparkles className="w-3.5 h-3.5 text-accent" />
-                  Pretrained Weights
-                </h3>
-                <p className="text-xs text-secondary mt-1.5 leading-relaxed">
-                  Loaded with official OpenAI GPT-2 124M parameter weights, mapped layer by layer to generate clean English.
-                </p>
-              </div>
-              <div className="p-4 rounded-xl border border-border bg-elevated/15 text-left">
-                <h3 className="text-xs font-semibold text-primary flex items-center gap-1.5 uppercase tracking-wider">
-                  <Cpu className="w-3.5 h-3.5 text-accent" />
-                  O(N) KV-Caching
-                </h3>
-                <p className="text-xs text-secondary mt-1.5 leading-relaxed">
-                  Causal self-attention cache optimization avoids recalculating keys and values across autoregressive steps.
-                </p>
-              </div>
+              {/* Math Tutor Card */}
+              <button
+                onClick={() => onSelectPersona?.("Math Tutor")}
+                className="p-5 rounded-2xl border border-border bg-surface/30 hover:border-accent/40 hover:bg-elevated/10 text-left transition-all duration-300 hover:scale-102 flex flex-col justify-between cursor-pointer h-[200px]"
+              >
+                <div>
+                  <div className="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4 text-sky-400">
+                    <GraduationCap className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-primary">Math Tutor</h3>
+                  <p className="text-xs text-secondary mt-1.5 leading-relaxed pr-2">
+                    Algebra, Calculus, and Geometry equations. Formula derivation and problem-solving steps.
+                  </p>
+                </div>
+                <div className="text-[10px] font-mono text-muted uppercase tracking-wider mt-4">
+                  Geometry • Calculus • Algebra
+                </div>
+              </button>
+
+              {/* Physics Helper Card */}
+              <button
+                onClick={() => onSelectPersona?.("Physics Helper")}
+                className="p-5 rounded-2xl border border-border bg-surface/30 hover:border-accent/40 hover:bg-elevated/10 text-left transition-all duration-300 hover:scale-102 flex flex-col justify-between cursor-pointer h-[200px]"
+              >
+                <div>
+                  <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center mb-4 text-purple-400">
+                    <Atom className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-primary">Physics Helper</h3>
+                  <p className="text-xs text-secondary mt-1.5 leading-relaxed pr-2">
+                    Classical mechanics, kinematics, force calculations, and thermodynamics.
+                  </p>
+                </div>
+                <div className="text-[10px] font-mono text-muted uppercase tracking-wider mt-4">
+                  Mechanics • Energy • Forces
+                </div>
+              </button>
+
+              {/* General Assistant Card */}
+              <button
+                onClick={() => onSelectPersona?.("General Assistant")}
+                className="p-5 rounded-2xl border border-border bg-surface/30 hover:border-accent/40 hover:bg-elevated/10 text-left transition-all duration-300 hover:scale-102 flex flex-col justify-between cursor-pointer h-[200px]"
+              >
+                <div>
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center mb-4 text-amber-400">
+                    <Compass className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-primary">General Assistant</h3>
+                  <p className="text-xs text-secondary mt-1.5 leading-relaxed pr-2">
+                    Importance of mathematics, history, prime numbers, infinity, and theory.
+                  </p>
+                </div>
+                <div className="text-[10px] font-mono text-muted uppercase tracking-wider mt-4">
+                  History • Infinity • Theory
+                </div>
+              </button>
             </motion.div>
           </div>
         ) : (
@@ -200,6 +247,88 @@ export default function ChatWindow({ messages, isGenerating }: ChatWindowProps) 
                     <span className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: "150ms" }} />
                     <span className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" style={{ animationDelay: "300ms" }} />
                   </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Clickable prompt suggestions below assistant responses */}
+            {!isGenerating && messages[messages.length - 1]?.role === "assistant" && persona && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-6 border border-border/40 bg-elevated/10 p-4 rounded-2xl flex flex-col gap-3"
+              >
+                <div className="text-[10px] font-semibold text-accent uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Recommended Next Steps
+                </div>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {persona === "Math Tutor" && (
+                    <>
+                      <button
+                        onClick={() => onSelectPrompt?.("Explain the Pythagorean theorem")}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
+                      >
+                        Explain the Pythagorean theorem
+                      </button>
+                      <button
+                        onClick={() => onSelectPrompt?.("What is a derivative?")}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
+                      >
+                        What is a derivative?
+                      </button>
+                      <button
+                        onClick={() => onSelectPrompt?.("How do you solve linear equations?")}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
+                      >
+                        How do you solve linear equations?
+                      </button>
+                    </>
+                  )}
+                  {persona === "Physics Helper" && (
+                    <>
+                      <button
+                        onClick={() => onSelectPrompt?.("What is Newton's second law?")}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
+                      >
+                        What is Newton's second law?
+                      </button>
+                      <button
+                        onClick={() => onSelectPrompt?.("Explain gravitational potential energy")}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
+                      >
+                        Explain gravitational potential energy
+                      </button>
+                      <button
+                        onClick={() => onSelectPrompt?.("How does speed relate to velocity?")}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
+                      >
+                        How does speed relate to velocity?
+                      </button>
+                    </>
+                  )}
+                  {persona === "General Assistant" && (
+                    <>
+                      <button
+                        onClick={() => onSelectPrompt?.("Why is math important?")}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
+                      >
+                        Why is math important?
+                      </button>
+                      <button
+                        onClick={() => onSelectPrompt?.("Explain the concept of infinity")}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
+                      >
+                        Explain the concept of infinity
+                      </button>
+                      <button
+                        onClick={() => onSelectPrompt?.("What are prime numbers?")}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
+                      >
+                        What are prime numbers?
+                      </button>
+                    </>
+                  )}
                 </div>
               </motion.div>
             )}
