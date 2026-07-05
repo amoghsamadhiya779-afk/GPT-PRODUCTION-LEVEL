@@ -10,6 +10,9 @@ interface ComposerProps {
   onStop: () => void;
   onRegenerate?: () => void;
   lastAssistantMessage?: string;
+  isOffline?: boolean;
+  webSearch?: boolean;
+  onToggleWebSearch?: (enabled: boolean) => void;
 }
 
 export default function Composer({
@@ -18,6 +21,9 @@ export default function Composer({
   onStop,
   onRegenerate,
   lastAssistantMessage,
+  isOffline,
+  webSearch,
+  onToggleWebSearch,
 }: ComposerProps) {
   const [input, setInput] = useState("");
   const [isCopied, setIsCopied] = useState(false);
@@ -95,10 +101,21 @@ export default function Composer({
       )}
 
       {/* Composer Input Area */}
-      <form
-        onSubmit={handleSubmit}
-        className="relative flex items-end w-full bg-surface/60 border border-border rounded-[24px] shadow-lg focus-within:border-accent/35 focus-within:shadow-accent-glow backdrop-blur-md transition-all p-2 pl-4"
-      >
+      <div className="relative">
+        {isOffline && (
+          <div className="absolute -top-10 left-0 right-0 flex justify-center">
+            <div className="bg-warning/15 border border-warning/30 text-warning px-3 py-1.5 rounded-full text-xs flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
+              Backend is offline. Running in mock mode.
+            </div>
+          </div>
+        )}
+        <form
+          onSubmit={handleSubmit}
+          className={`relative flex items-end w-full bg-surface/60 border border-border rounded-[24px] shadow-lg focus-within:border-accent/35 focus-within:shadow-accent-glow backdrop-blur-md transition-all p-2 pl-4 ${
+            isOffline ? "opacity-80" : ""
+          }`}
+        >
         {/* Attach Button */}
         <button
           type="button"
@@ -107,6 +124,24 @@ export default function Composer({
         >
           <Paperclip className="w-4.5 h-4.5" />
         </button>
+
+        {/* Web Search Toggle */}
+        {onToggleWebSearch && (
+          <button
+            type="button"
+            onClick={() => onToggleWebSearch(!webSearch)}
+            className={`p-2 mx-1 mb-1.5 rounded-full transition-all hover:scale-105 active:scale-95 flex-shrink-0 ${
+              webSearch
+                ? "text-accent bg-accent/10 hover:bg-accent/20"
+                : "text-muted hover:text-primary hover:bg-elevated/45"
+            }`}
+            title={webSearch ? "Web Search enabled" : "Enable Web Search"}
+          >
+            <div className="relative">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
+            </div>
+          </button>
+        )}
 
         {/* Text Area */}
         <textarea
@@ -150,6 +185,7 @@ export default function Composer({
           )}
         </div>
       </form>
+      </div>
     </div>
   );
 }

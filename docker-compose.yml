@@ -1,9 +1,7 @@
 # docker-compose.yml
 # ============================================================
-#  GPT-2 Microservices Orchestration (API + Streamlit UI)
+#  GPT-2 Microservices Orchestration (API + Streamlit UI + Next.js)
 # ============================================================
-
-version: '3.8'
 
 services:
   # 1. FastAPI Model serving container
@@ -20,8 +18,16 @@ services:
       - ./checkpoints_tiny:/app/checkpoints_tiny
       - ./logs_tiny:/app/logs_tiny
       - ./logs:/app/logs
+      - ./data:/app/data
     environment:
       - MODEL_CHECKPOINT=checkpoints_tiny/best_model.pt
+      - PORT=8000
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   # 2. Streamlit interactive UI container
@@ -34,7 +40,8 @@ services:
     ports:
       - "8501:8501"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     volumes:
       - ./checkpoints:/app/checkpoints
       - ./checkpoints_tiny:/app/checkpoints_tiny
@@ -42,4 +49,31 @@ services:
       - ./logs:/app/logs
     environment:
       - BACKEND_URL=http://api:8000
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8501/_stcore/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # 3. Next.js Frontend UI container
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_URL: http://localhost:8000
+    container_name: gpt-nextjs-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped

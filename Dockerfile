@@ -15,24 +15,23 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python requirements
 COPY requirements.txt /app/
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy source code files
 COPY app/ /app/app/
 COPY model/ /app/model/
 COPY training/ /app/training/
-COPY data/ /app/data/
 COPY configs/ /app/configs/
 
-# Expose server port (FastAPI defaults to 8000, Streamlit defaults to 8501)
+# Expose server ports
 EXPOSE 7860
+EXPOSE 8000
 EXPOSE 8501
 
 # Default runtime command (can be overridden in docker-compose)

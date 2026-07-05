@@ -48,3 +48,7 @@ Thumbs.db
 mlflow.db
 mlruns/
 node-env/
+venv_prod/
+frontend/node_modules/
+data/feedback.jsonl
+.env

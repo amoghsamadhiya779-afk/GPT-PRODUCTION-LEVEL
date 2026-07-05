@@ -1,4 +1,3 @@
-
 ---
 title: GPT From Scratch
 emoji: 🚀
@@ -10,12 +9,15 @@ pinned: false
 
 # GPT-2 From Scratch: Serving API & Streamlit Playground
 
+[![Live Demo](https://img.shields.io/badge/Live_Demo-GPT_Studio-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://gpt-production-level.vercel.app)
+
 This project is a production-level, decoder-only transformer language model built entirely from scratch using PyTorch primitives, complete with a REST serving layer, containerized UI dashboard, and experiment tracking.
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.2+-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.32+-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io)
+[![Next.js](https://img.shields.io/badge/Next.js-15-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![MLflow](https://img.shields.io/badge/MLflow-2.11+-0194E2?style=for-the-badge&logo=mlflow&logoColor=white)](https://mlflow.org)
 [![Docker](https://img.shields.io/badge/Docker-Community-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docker.com)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
@@ -33,31 +35,35 @@ The project implements a decoupled microservices architecture designed to mimic 
                   │      User Web Browser        │
                   └──────────────┬───────────────┘
                                  │
-                        HTTP (Port 8501)
-                                 │
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │      Streamlit Dashboard     │
-                  ├──────────────────────────────┤
-                  │  * Interactive Playground    │
-                  │  * Telemetry UI / Metrics    │
-                  │  * Local Engine Fallback     │
-                  └──────────────┬───────────────┘
-                                 │
-                        HTTP (Port 8000)
-                                 │
+                 ┌───────────────┴───────────────┐
+                 ▼                               ▼
+  ┌──────────────────────────────┐ ┌──────────────────────────────┐
+  │        Next.js Chat UI       │ │     Streamlit Dashboard      │
+  ├──────────────────────────────┤ ├──────────────────────────────┤
+  │ * Deployed on Vercel         │ │ * Internal Telemetry         │
+  │ * Beautiful animations       │ │ * Local Engine Fallback      │
+  │ * Teach Mode & Grounding     │ │ * Playground Branch          │
+  └──────────────┬───────────────┘ └──────────────┬───────────────┘
+                 │                                │
+                 └───────────────┬───────────────┘
                                  ▼
                   ┌──────────────────────────────┐
                   │     FastAPI Model Server     │
                   ├──────────────────────────────┤
-                  │  * Preloads weights once     │
-                  │  * Pydantic Request Validation│
-                  │  * KV-Cached GPT-2 Inference │
+                  │ * Preloads weights once      │
+                  │ * SSE Token Streaming        │
+                  │ * KV-Cached GPT-2 Inference  │
+                  │ * Background LoRA Fine-tuning│
+                  └──────────────┬───────────────┘
+                                 │
+                                 ▼
+                  ┌──────────────────────────────┐
+                  │     GPT-2 From Scratch       │
                   └──────────────────────────────┘
 ```
 
-- **Separation of Concerns**: Serves compute-heavy model inference (FastAPI) independently from user interfaces (Streamlit). In production, this allows frontend instances to scale cheaply while keeping model weights in dedicated, GPU-accelerated replicas.
-- **Fail-Safe Fallback**: If the FastAPI server is offline (e.g., when hosted on free sandboxes like Hugging Face Spaces or Streamlit Cloud), the Streamlit dashboard automatically switches to **Standalone Standby Mode**, loading the model weights locally in CPU space to ensure 100% live uptime.
+- **Separation of Concerns**: Serves compute-heavy model inference (FastAPI) independently from user interfaces (Next.js & Streamlit). In production, this allows frontend instances to scale cheaply while keeping model weights in dedicated, GPU-accelerated replicas.
+- **Fail-Safe Fallback**: If the FastAPI server is offline, the Streamlit dashboard automatically switches to **Standalone Standby Mode**, loading the model weights locally in CPU space to ensure 100% live uptime. The Next.js frontend gracefully falls back to a mocked offline mode.
 
 ---
 
@@ -99,18 +105,19 @@ We support two modes of training:
 ### A. Local Pre-Compiled Corpus (Offline Mode)
 First, compile the datasets locally to generate a consolidated text file:
 ```bash
-py data/download_cosmopedia.py
+python data/download_cosmopedia.py
 ```
 This generates `data/cosmopedia_math.txt`. Next, launch the training script:
 ```bash
-py training/train.py --config configs/gpt2_small.yaml --data data/cosmopedia_math.txt
+python training/train.py --config configs/gpt2_small.yaml --data data/cosmopedia_math.txt
 ```
 
 ### B. On-the-Fly Streaming (Zero Local Storage Mode)
 If you want to train the model without downloading files locally (e.g. to avoid the 92 GB Cosmopedia download limit), you can stream data chunks directly from Hugging Face into memory. We use online split routing (modulus split) to divide the stream into 90% training and 10% validation batches:
 ```bash
-py training/train.py --data stream_hf --data_type stream_hf --epochs 3 --batch_size 4 --steps_per_epoch 1000 --use_amp
+python training/train.py --data stream_hf --data_type stream_hf --epochs 3 --batch_size 4 --steps_per_epoch 1000 --use_amp
 ```
+*(Note: On Windows, use `py` instead of `python` if `python` is not in your PATH.)*
 
 ---
 
@@ -129,6 +136,12 @@ GPT-PRODUCTION-LEVEL/
 ├── configs/
 │   ├── gpt2_small.yaml         # GPT-2 Small configuration (124M parameters)
 │   └── gpt2_tiny.yaml          # Tiny model configuration (approx. 13M parameters)
+│
+├── frontend/                   # Next.js App Router Chat UI
+│   ├── src/app/                # Next.js pages and layouts
+│   ├── src/components/         # React components (ChatWindow, Composer, TeachView)
+│   ├── src/lib/                # API clients and utilities
+│   └── package.json            # Node dependencies
 │
 ├── model/                      # PyTorch model definitions
 │   ├── __init__.py             # Exports
@@ -157,11 +170,13 @@ GPT-PRODUCTION-LEVEL/
 │   ├── inference.py            # Inference engine with time & speed benchmarks
 │   ├── schemas.py              # Pydantic request/response schemas
 │   ├── api.py                  # FastAPI server endpoints
+│   ├── finetune.py             # Background LoRA finetuning jobs
 │   ├── search.py               # Vector search & retrieval modules
 │   └── dashboard.py            # Streamlit interactive UI dashboard
 │
 └── tests/                      # Pytest unit testing suite
     ├── __init__.py
+    ├── test_api.py             # API endpoints and SSE streaming
     ├── test_cosmopedia.py      # Cosmopedia loader and streamed training tests
     ├── test_dataset.py         # Static sliding window and instruction tests
     ├── test_model.py           # Model shapes, mask properties, and KV-cache equivalence
@@ -169,6 +184,20 @@ GPT-PRODUCTION-LEVEL/
     ├── test_tokenizer.py       # Tokenizer encoding & decoding round-trip tests
     └── test_train.py           # Integration dry-run training loop tests
 ```
+
+---
+
+## Configuration
+
+The application can be configured using environment variables:
+
+| Variable | Default | Service | Description |
+| :--- | :--- | :--- | :--- |
+| `MODEL_CHECKPOINT` | `checkpoints/best_model.pt` | FastAPI / Streamlit | Path to the PyTorch model weights file. |
+| `BACKEND_URL` | `http://localhost:8000` | Streamlit | The URL of the FastAPI model server. |
+| `ALLOWED_ORIGINS` | `http://localhost:3000,...` | FastAPI | Comma-separated list of CORS allowed origins. |
+| `WEB_SEARCH_API_KEY` | *(None)* | FastAPI | Serper.dev API key for web search grounding. |
+| `NEXT_PUBLIC_BACKEND_URL` | `http://localhost:8000` | Next.js Frontend | The URL of the FastAPI backend for the Next.js client. |
 
 ---
 
@@ -190,7 +219,7 @@ Returns the active serving status, loaded model weights path, parameter size, an
 ```
 
 ### 2. Generate Text (`POST /generate`)
-Validates input parameters via Pydantic and executes text generation.
+Validates input parameters via Pydantic and executes text generation. Includes optional `web_search` for RAG grounding.
 
 **Request Payload**:
 ```json
@@ -199,7 +228,8 @@ Validates input parameters via Pydantic and executes text generation.
   "max_new_tokens": 100,
   "temperature": 0.8,
   "top_k": 50,
-  "use_cache": true
+  "use_cache": true,
+  "web_search": true
 }
 ```
 
@@ -210,12 +240,65 @@ Validates input parameters via Pydantic and executes text generation.
   "generated_text": "Once upon a time Jack Gisburn rather a cheap genius...",
   "tokens_generated": 100,
   "time_taken_seconds": 0.908,
-  "tokens_per_second": 110.2
+  "tokens_per_second": 110.2,
+  "sources": [{"title": "Web Page", "snippet": "Context", "link": "https://..."}]
 }
 ```
 
-### 3. Fetch Training Plot (`GET /training/plot`)
-Returns the Matplotlib training/validation loss curve image.
+### 3. Generate Text Stream (`POST /generate/stream`)
+Uses Server-Sent Events (SSE) to stream generation tokens one by one, providing immediate feedback.
+
+**Example SSE Output**:
+```text
+data: {"sources": [{"title": "Web Page", "snippet": "Context", "link": "https://..."}]}
+
+data: {"token": "Once", "index": 0}
+data: {"token": " upon", "index": 1}
+
+data: {"done": true, "tokens_generated": 2, "time_taken_seconds": 0.05, "tokens_per_second": 40.0}
+```
+
+### 4. Fine-tuning (`POST /finetune`)
+Launch a background LoRA fine-tuning job on a set of examples.
+
+**Request Payload**:
+```json
+{
+  "examples": [{"instruction": "What is 2+2?", "response": "4"}],
+  "adapter_name": "math_helper",
+  "steps": 100,
+  "lr": 0.001
+}
+```
+
+### 5. Fine-tuning Status (`GET /finetune/{job_id}`)
+Check the status of a running fine-tuning job.
+
+**Example Response**:
+```json
+{
+  "status": "running",
+  "step": 45,
+  "total_steps": 100,
+  "current_loss": 2.14,
+  "eta_seconds": 15
+}
+```
+
+### 6. Adapters Management (`GET /adapters`)
+List available LoRA adapters and activate/deactivate them using `POST /adapters/{name}/activate` and `POST /adapters/deactivate`.
+
+### 7. Feedback (`POST /feedback`)
+Submit user feedback on model responses.
+
+**Request Payload**:
+```json
+{
+  "prompt": "What is 2+2?",
+  "response": "4",
+  "rating": "up"
+}
+```
 
 ---
 
@@ -240,26 +323,36 @@ Open `http://localhost:5000` in your web browser to compare training runs and vi
 Install dependencies locally:
 ```bash
 # Setup virtual environment
-py -m venv venv
+python -m venv venv
+# Linux/macOS
+source venv/bin/activate
+# Windows
 venv\Scripts\activate
 
 # Install requirements
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 # Download local datasets (Optional)
-py data/download.py
-py data/download_cosmopedia.py
+python data/download.py
+python data/download_cosmopedia.py
 
 # Run a fast training smoke test
-py training/train.py --config configs/gpt2_tiny.yaml
+python training/train.py --config configs/gpt2_tiny.yaml
 
 # Start FastAPI serving backend
-py -m uvicorn app.api:app --reload --port 8000
+python -m uvicorn app.api:app --reload --port 8000
 
 # Start Streamlit UI dashboard
-py -m streamlit run app/dashboard.py --server.port 8501
+python -m streamlit run app/dashboard.py --server.port 8501
 ```
-Visit `http://localhost:8501` to use the playground.
+
+For the Next.js frontend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Visit `http://localhost:3000` to see the Next.js UI, or `http://localhost:8501` for the Streamlit dashboard.
 
 ### 2. Multi-Service Container Run (Docker Compose)
 To launch the complete system inside isolated containers:
@@ -274,7 +367,7 @@ Checkpoints and logs directories are automatically mapped into the containers to
 ### 3. Running Unit Tests
 To run unit tests verifying KV-cache mathematical equivalence, streaming, and layer shapes:
 ```bash
-py -m pytest tests/ -v
+python -m pytest tests/ -v
 ```
 
 ---

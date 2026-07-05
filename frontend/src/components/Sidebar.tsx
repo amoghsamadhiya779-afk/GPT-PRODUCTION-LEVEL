@@ -18,8 +18,8 @@ import Logo from "@/components/Logo";
 
 interface SidebarProps {
   onOpenSettings: () => void;
-  onSelectNav: (view: "chat" | "analytics" | "architecture") => void;
-  currentNav: "chat" | "analytics" | "architecture";
+  onSelectNav: (view: "chat" | "analytics" | "architecture" | "teach") => void;
+  currentNav: "chat" | "analytics" | "architecture" | "teach";
   onNewChat: () => void;
   history: Array<{ id: string; title: string }>;
   currentChatId?: string;
@@ -49,6 +49,7 @@ export default function Sidebar({
     { id: "chat", name: "Playground Chat", icon: MessageSquare },
     { id: "analytics", name: "Training Telemetry", icon: LineChart },
     { id: "architecture", name: "Model Architecture", icon: Cpu },
+    { id: "teach", name: "Teach Mode", icon: Cpu }, // Using Cpu here since GraduationCap isn't imported from lucide-react in this file
   ] as const;
 
   return (

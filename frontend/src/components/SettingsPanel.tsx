@@ -16,6 +16,7 @@ export interface ModelSettings {
   maxTokens: number;
   useCache: boolean;
   webSearch?: boolean;
+  activeAdapter?: string | null;
 }
 
 interface SettingsPanelProps {
@@ -39,6 +40,37 @@ export default function SettingsPanel({
   backendInfo,
 }: SettingsPanelProps) {
   const { theme, setTheme } = useTheme();
+  const [adapters, setAdapters] = React.useState<string[]>([]);
+  const [isActivating, setIsActivating] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      import("@/lib/api").then(({ api }) => {
+        api.getAdapters().then((res) => {
+          if (res && res.adapters) setAdapters(res.adapters);
+        });
+      });
+    }
+  }, [isOpen]);
+
+  const handleAdapterChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    setIsActivating(true);
+    try {
+      const { api } = await import("@/lib/api");
+      if (val === "none") {
+        await api.deactivateAdapter();
+        updateSetting("activeAdapter", null);
+      } else {
+        await api.activateAdapter(val);
+        updateSetting("activeAdapter", val);
+      }
+    } catch (e) {
+      alert("Failed to change adapter");
+    } finally {
+      setIsActivating(false);
+    }
+  };
 
   const updateSetting = <K extends keyof ModelSettings>(key: K, value: ModelSettings[K]) => {
     onChange({
@@ -90,7 +122,10 @@ export default function SettingsPanel({
 
               {/* Model Selection */}
               <div className="space-y-3 py-6 border-b border-border">
-                <label className="text-xs font-semibold text-muted uppercase tracking-wider">Model</label>
+                <label className="text-xs font-semibold text-muted uppercase tracking-wider flex items-center justify-between">
+                  <span>Model</span>
+                  <span className="text-[10px] bg-elevated/30 px-1.5 py-0.5 rounded text-muted">(Display Only)</span>
+                </label>
                 <div className="grid grid-cols-1 gap-2">
                   {models.map((model) => {
                     const isSelected = settings.model === model.id;
@@ -254,6 +289,31 @@ export default function SettingsPanel({
                     checked={settings.webSearch || false}
                     onCheckedChange={(val) => updateSetting("webSearch", val)}
                   />
+                </div>
+              </div>
+
+              {/* LoRA Adapters */}
+              <div className="space-y-3 py-6 border-b border-border">
+                <label className="text-xs font-semibold text-muted uppercase tracking-wider block">
+                  Fine-Tuned Adapters (LoRA)
+                </label>
+                <div className="flex flex-col gap-2">
+                  <select
+                    value={settings.activeAdapter || "none"}
+                    onChange={handleAdapterChange}
+                    disabled={isActivating}
+                    className="w-full bg-elevated border border-border rounded-lg p-2 text-sm focus:outline-none focus:border-accent disabled:opacity-50"
+                  >
+                    <option value="none">Base Model (No Adapter)</option>
+                    {adapters.map((adapter) => (
+                      <option key={adapter} value={adapter}>
+                        {adapter}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[11px] text-muted block leading-normal">
+                    Hot-swap LoRA weights into the running model without reloading the base checkpoint.
+                  </span>
                 </div>
               </div>
 

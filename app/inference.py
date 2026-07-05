@@ -13,7 +13,7 @@ import torch
 # Add root folder to path to enable clean imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model.gpt import GPTModel, generate, count_parameters
+from model.gpt import GPTModel, generate, generate_stream, count_parameters
 from model.tokenizer import GPT2Tokenizer
 
 
@@ -142,3 +142,51 @@ class GPTInferenceEngine:
             "time_taken_seconds": latency,
             "tokens_per_second": tokens_per_second,
         }
+
+    def generate_stream(
+        self,
+        prompt: str,
+        max_new_tokens: int = 100,
+        temperature: float = 0.8,
+        top_k: int = 50,
+        top_p: float | None = None,
+        repetition_penalty: float = 1.0,
+        use_cache: bool = True,
+    ):
+        """Generator that yields newly generated text chunks, latency, and token count."""
+        input_ids = self.tokenizer.text_to_token_ids(prompt).to(self.device)
+        eos_id = self.tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+
+        start_time = time.perf_counter()
+        tokens_generated = 0
+        byte_buffer = b""
+
+        for token_id in generate_stream(
+            model=self.model,
+            idx=input_ids,
+            max_new_tokens=max_new_tokens,
+            context_size=self.context_size,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            eos_id=eos_id,
+            use_cache=use_cache,
+        ):
+            tokens_generated += 1
+            token_bytes = self.tokenizer.encoding.decode_single_token_bytes(token_id)
+            byte_buffer += token_bytes
+
+            try:
+                text_chunk = byte_buffer.decode("utf-8")
+                byte_buffer = b""
+            except UnicodeDecodeError:
+                text_chunk = ""
+
+            latency = time.perf_counter() - start_time
+            yield text_chunk, latency, tokens_generated
+
+        if byte_buffer:
+            text_chunk = byte_buffer.decode("utf-8", errors="replace")
+            latency = time.perf_counter() - start_time
+            yield text_chunk, latency, tokens_generated

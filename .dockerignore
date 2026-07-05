@@ -1,0 +1,9 @@
+venv/
+frontend/node_modules/
+.git/
+checkpoints/
+checkpoints_tiny/
+logs/
+logs_tiny/
+mlruns/
+__pycache__/

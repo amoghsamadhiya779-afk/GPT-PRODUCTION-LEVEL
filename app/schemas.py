@@ -9,7 +9,8 @@ class GenerationRequest(BaseModel):
     prompt: str = Field(
         ..., 
         description="The starting text prompt to seed generation.",
-        min_length=1
+        min_length=1,
+        max_length=4000
     )
     max_new_tokens: int = Field(
         default=100, 
@@ -62,3 +63,27 @@ class GenerationResponse(BaseModel):
         default=None,
         description="List of search result sources used for RAG context."
     )
+
+
+class FinetuneExample(BaseModel):
+    instruction: str = Field(..., max_length=2000)
+    response: str = Field(..., max_length=2000)
+
+class FinetuneRequest(BaseModel):
+    examples: list[FinetuneExample] = Field(..., min_length=1, max_length=500)
+    adapter_name: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    steps: int = Field(default=200, le=200, ge=1)
+    lr: float = Field(default=1e-4, ge=1e-6, le=1e-2)
+
+class FinetuneStatus(BaseModel):
+    status: str
+    step: int
+    total_steps: int
+    current_loss: float | None
+    eta_seconds: float | None
+
+class FeedbackRequest(BaseModel):
+    prompt: str
+    response: str
+    rating: str = Field(..., pattern="^(up|down)$")
+    correction: str | None = None

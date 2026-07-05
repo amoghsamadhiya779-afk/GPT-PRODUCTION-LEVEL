@@ -1,10 +1,75 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useTheme } from "./ThemeProvider";
-import { Cpu, User, Sparkles, AlertTriangle, GraduationCap, Atom, Compass } from "lucide-react";
+import { Cpu, User, Sparkles, AlertTriangle, GraduationCap, Atom, Compass, ThumbsUp, ThumbsDown, Edit3, Check } from "lucide-react";
 import Logo from "@/components/Logo";
+import { api } from "@/lib/api";
+
+function MessageFeedback({ prompt, response }: { prompt: string; response: string }) {
+  const [rating, setRating] = useState<"up" | "down" | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [correction, setCorrection] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleRate = async (r: "up" | "down") => {
+    setRating(r);
+    if (r === "up") {
+      try {
+        await api.submitFeedback({ prompt, response, rating: "up" });
+        setSubmitted(true);
+      } catch (e) {}
+    } else {
+      setIsEditing(true);
+    }
+  };
+
+  const handleCorrect = async () => {
+    try {
+      await api.submitFeedback({ prompt, response, rating: "down", correction });
+      setSubmitted(true);
+      setIsEditing(false);
+    } catch (e) {}
+  };
+
+  if (submitted) {
+    return <div className="text-[10px] text-success flex items-center gap-1"><Check className="w-3 h-3"/> Feedback submitted</div>;
+  }
+
+  return (
+    <div className="flex flex-col gap-2 mt-2">
+      {!isEditing ? (
+        <div className="flex items-center gap-2">
+          <button onClick={() => handleRate("up")} className={`p-1 rounded hover:bg-surface/50 text-secondary hover:text-success transition-colors ${rating === 'up' ? 'text-success' : ''}`}>
+            <ThumbsUp className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => handleRate("down")} className={`p-1 rounded hover:bg-surface/50 text-secondary hover:text-destructive transition-colors ${rating === 'down' ? 'text-destructive' : ''}`}>
+            <ThumbsDown className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => setIsEditing(true)} className="p-1 rounded hover:bg-surface/50 text-secondary hover:text-accent transition-colors flex items-center gap-1 text-[10px] ml-2">
+            <Edit3 className="w-3.5 h-3.5" />
+            Correct this answer
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 bg-elevated/30 p-2 rounded-lg border border-border">
+          <textarea
+            value={correction}
+            onChange={(e) => setCorrection(e.target.value)}
+            placeholder="Provide the correct response..."
+            className="w-full text-xs bg-surface border border-border rounded p-2 focus:outline-none focus:border-accent"
+            rows={2}
+          />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setIsEditing(false)} className="text-[10px] text-muted hover:text-secondary px-2 py-1">Cancel</button>
+            <button onClick={handleCorrect} className="text-[10px] bg-accent text-accent-foreground px-2 py-1 rounded hover:bg-accent/90">Submit</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export interface Message {
   id: string;
@@ -181,24 +246,36 @@ export default function ChatWindow({
 
                     {/* Telemetry metadata footer */}
                     {!isUser && !message.isStreaming && (message.latency !== undefined) && (
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[10.5px] font-mono text-muted select-none">
-                        <span>Latency: <strong>{message.latency.toFixed(3)}s</strong></span>
-                        <span className="text-border">•</span>
-                        <span>Speed: <strong>{message.tokensPerSecond?.toFixed(1)} t/s</strong></span>
-                        <span className="text-border">•</span>
-                        <span>Tokens: <strong>{message.tokensGenerated}</strong></span>
-                        <span className="text-border">•</span>
-                        <span>KV-Cache: <strong className={message.useCache ? "text-accent" : "text-muted"}>{message.useCache ? "ON" : "OFF"}</strong></span>
+                      <div className="flex flex-col gap-2 w-full mt-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[10.5px] font-mono text-muted select-none">
+                          <span>Latency: <strong>{message.latency.toFixed(3)}s</strong></span>
+                          <span className="text-border">•</span>
+                          <span>Speed: <strong>{message.tokensPerSecond?.toFixed(1)} t/s</strong></span>
+                          <span className="text-border">•</span>
+                          <span>Tokens: <strong>{message.tokensGenerated}</strong></span>
+                          <span className="text-border">•</span>
+                          <span>KV-Cache: <strong className={message.useCache ? "text-accent" : "text-muted"}>{message.useCache ? "ON" : "OFF"}</strong></span>
+                        </div>
+                        
+                        {/* Feedback Area */}
+                        <div className="px-1">
+                          <MessageFeedback prompt={messages[messages.findIndex(m => m.id === message.id) - 1]?.content || ""} response={message.content} />
+                        </div>
                       </div>
                     )}
 
                     {/* Web Search Sources */}
-                    {!isUser && !message.isStreaming && message.sources && message.sources.length > 0 && (
+                    {!isUser && message.sources && message.sources.length > 0 && (
                       <div className="mt-2.5 p-3 rounded-xl border border-border/40 bg-elevated/15 text-left space-y-2 w-full">
-                        <h4 className="text-[10.5px] font-semibold text-accent flex items-center gap-1.5 uppercase tracking-wider select-none">
-                          <Sparkles className="w-3.5 h-3.5 text-accent animate-pulse" />
-                          Retrieved Search Sources
-                        </h4>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h4 className="text-[10.5px] font-semibold text-accent flex items-center gap-1.5 uppercase tracking-wider select-none">
+                            <Sparkles className="w-3.5 h-3.5 text-accent animate-pulse" />
+                            Retrieved Search Sources
+                          </h4>
+                          <span className="text-[9px] bg-accent/10 text-accent px-1.5 py-0.5 rounded-full uppercase tracking-wider font-semibold border border-accent/20">
+                            Grounded on live web results
+                          </span>
+                        </div>
                         <div className="grid grid-cols-1 gap-2 mt-1.5">
                           {message.sources.map((src, idx) => (
                             <a

@@ -12,13 +12,21 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "GPT Studio",
   description: "Autoregressive GPT-2 Playground",
+  openGraph: {
+    title: "GPT Studio",
+    description: "Autoregressive GPT-2 Playground",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "GPT Studio",
+    description: "Autoregressive GPT-2 Playground",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
 };
 
 export default function RootLayout({

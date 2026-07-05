@@ -2,13 +2,14 @@
 
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { LineChart, BarChart2, Info, RefreshCw, Cpu, Award } from "lucide-react";
+import { LineChart, BarChart2, Info, RefreshCw, Cpu, Award, Activity } from "lucide-react";
 
 interface AnalyticsViewProps {
   backendUrl: string;
+  currentSession?: any;
 }
 
-export default function AnalyticsView({ backendUrl }: AnalyticsViewProps) {
+export default function AnalyticsView({ backendUrl, currentSession }: AnalyticsViewProps) {
   const [plotUrl, setPlotUrl] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,9 +36,16 @@ export default function AnalyticsView({ backendUrl }: AnalyticsViewProps) {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchPlot();
   }, [backendUrl]);
 
+  const assistantMessages = currentSession?.messages?.filter((m: any) => m.role === "assistant" && m.tokensPerSecond) || [];
+  const hasData = assistantMessages.length > 0;
+  
+  // Calculate max values for chart scaling
+  const maxTokensPerSec = hasData ? Math.max(...assistantMessages.map((m: any) => m.tokensPerSecond)) : 10;
+  
   return (
     <div className="flex-1 overflow-y-auto px-4 md:px-8 py-8 flex flex-col items-center select-none">
       <div className="w-full max-w-4xl space-y-6">
@@ -129,6 +137,57 @@ export default function AnalyticsView({ backendUrl }: AnalyticsViewProps) {
                 </span>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Session Analytics Chart */}
+        <div className="p-5 rounded-2xl border border-border bg-surface/30 backdrop-blur-sm mt-6">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-sm font-semibold text-primary uppercase tracking-wider flex items-center gap-1.5">
+              <Activity className="w-4 h-4 text-accent" />
+              Session Inference Speed (Tokens/s)
+            </h3>
+          </div>
+          
+          <div className="h-[200px] w-full flex items-end gap-2 border-b border-l border-border/50 p-2 relative">
+            {!hasData ? (
+              <div className="absolute inset-0 flex items-center justify-center text-xs text-muted">
+                No generations in this session yet.
+              </div>
+            ) : (
+              assistantMessages.map((msg: any, i: number) => {
+                const heightPct = Math.max((msg.tokensPerSecond / maxTokensPerSec) * 100, 5);
+                return (
+                  <div key={msg.id} className="relative flex-1 flex flex-col justify-end items-center group h-full">
+                    {/* Tooltip */}
+                    <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-elevated border border-border text-[10px] p-1.5 rounded-md text-primary whitespace-nowrap z-10 pointer-events-none shadow-lg">
+                      {msg.tokensPerSecond.toFixed(1)} t/s
+                      <br/>
+                      {msg.latency?.toFixed(2)}s latency
+                    </div>
+                    {/* Bar */}
+                    <motion.div 
+                      initial={{ height: 0 }}
+                      animate={{ height: `${heightPct}%` }}
+                      transition={{ duration: 0.5, delay: i * 0.05 }}
+                      className="w-full max-w-[40px] bg-accent/80 hover:bg-accent rounded-t-sm"
+                    />
+                    <div className="absolute -bottom-5 text-[9px] text-muted truncate w-full text-center">
+                      Gen {i+1}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            
+            {/* Y-axis label */}
+            {hasData && (
+              <div className="absolute -left-8 top-0 text-[9px] text-muted h-full flex flex-col justify-between items-end pb-2">
+                <span>{Math.ceil(maxTokensPerSec)}</span>
+                <span>{Math.ceil(maxTokensPerSec / 2)}</span>
+                <span>0</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

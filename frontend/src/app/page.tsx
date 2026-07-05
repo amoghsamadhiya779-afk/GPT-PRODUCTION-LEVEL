@@ -8,10 +8,13 @@ import SettingsPanel, { ModelSettings } from "@/components/SettingsPanel";
 import ParticleBackground from "@/components/ParticleBackground";
 import AnalyticsView from "@/components/AnalyticsView";
 import ArchitectureView from "@/components/ArchitectureView";
+import TeachView from "@/components/TeachView";
 import { useTheme } from "@/components/ThemeProvider";
-import { Settings, Cpu, LineChart, Menu, Plus, Activity, MessageSquare } from "lucide-react";
+import { Settings, Cpu, LineChart, Menu, Plus, Activity, MessageSquare, GraduationCap } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import Logo from "@/components/Logo";
+import BootSequence from "@/components/BootSequence";
+import { api } from "@/lib/api";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
@@ -24,7 +27,7 @@ interface ChatSession {
 
 export default function Home() {
   const { theme } = useTheme();
-  const [currentNav, setCurrentNav] = useState<"chat" | "analytics" | "architecture">("chat");
+  const [currentNav, setCurrentNav] = useState<"chat" | "analytics" | "architecture" | "teach">("chat");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [settings, setSettings] = useState<ModelSettings>({
     model: "gpt-2-small",
@@ -36,6 +39,21 @@ export default function Home() {
     useCache: true,
     webSearch: false,
   });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("gptStudioSettings");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (saved) setSettings(JSON.parse(saved));
+    } catch (e) {}
+  }, []);
+
+  const handleSettingsChange = (newSettings: ModelSettings) => {
+    setSettings(newSettings);
+    try {
+      localStorage.setItem("gptStudioSettings", JSON.stringify(newSettings));
+    } catch (e) {}
+  };
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -52,22 +70,20 @@ export default function Home() {
   ]);
   const [currentSessionId, setCurrentSessionId] = useState<string>("1");
 
-  const stopRef = useRef<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Auto check backend health periodically
   useEffect(() => {
     const checkHealth = async () => {
-      try {
-        const res = await fetch(`${BACKEND_URL}/health`);
-        if (res.ok) {
-          const data = await res.json();
-          setBackendInfo({
-            status: data.status,
-            checkpoint: data.checkpoint,
-            parameters: data.parameters,
-            device: data.device,
-          });
-        } else {
+      const data = await api.health();
+      if (data) {
+        setBackendInfo({
+          status: data.status,
+          checkpoint: data.checkpoint,
+          parameters: data.parameters,
+          device: data.device,
+        });
+      } else {
           setBackendInfo({
             status: "offline",
             checkpoint: "None",
@@ -75,14 +91,6 @@ export default function Home() {
             device: "cpu",
           });
         }
-      } catch (e) {
-        setBackendInfo({
-          status: "offline",
-          checkpoint: "None (Standalone Standby)",
-          parameters: 0,
-          device: "cpu",
-        });
-      }
     };
 
     checkHealth();
@@ -164,7 +172,9 @@ export default function Home() {
   };
 
   const handleStop = () => {
-    stopRef.current = true;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     setIsGenerating(false);
   };
 
@@ -188,8 +198,7 @@ export default function Home() {
   const handleSend = async (promptText: string) => {
     if (isGenerating) return;
 
-    // Reset stop flag
-    stopRef.current = false;
+    abortControllerRef.current = new AbortController();
     setIsGenerating(true);
 
     const userMessage: Message = {
@@ -201,7 +210,6 @@ export default function Home() {
     const newMessages = [...messages, userMessage];
     updateSessionMessages(currentSessionId, newMessages);
 
-    // Placeholder for streaming assistant response
     const assistantMsgId = String(Date.now() + 1);
     const assistantMessage: Message = {
       id: assistantMsgId,
@@ -213,8 +221,6 @@ export default function Home() {
     updateSessionMessages(currentSessionId, [...newMessages, assistantMessage]);
 
     try {
-      let result;
-      // 1. If backend is online, query the FastAPI server
       if (backendInfo && backendInfo.status !== "offline") {
         const payload = {
           prompt: promptText,
@@ -227,38 +233,90 @@ export default function Home() {
           web_search: settings.webSearch || false,
         };
 
-        const res = await fetch(`${BACKEND_URL}/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
+        let currentContent = "";
+        
+        await api.generateStream(
+          payload,
+          (token) => {
+            currentContent += token;
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === currentSessionId
+                  ? {
+                      ...s,
+                      messages: s.messages.map((m) =>
+                        m.id === assistantMsgId ? { ...m, content: currentContent } : m
+                      ),
+                    }
+                  : s
+              )
+            );
+          },
+          (metrics) => {
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === currentSessionId
+                  ? {
+                      ...s,
+                      messages: s.messages.map((m) =>
+                        m.id === assistantMsgId
+                          ? {
+                              ...m,
+                              content: currentContent,
+                              isStreaming: false,
+                              latency: metrics.time_taken_seconds,
+                              tokensPerSecond: metrics.tokens_per_second,
+                              tokensGenerated: metrics.tokens_generated,
+                              useCache: settings.useCache,
+                              sources: metrics.sources || null,
+                            }
+                          : m
+                      ),
+                    }
+                  : s
+              )
+            );
+            setIsGenerating(false);
+          },
+          (err) => {
+            throw err;
+          },
+          abortControllerRef.current.signal,
+          (sources) => {
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === currentSessionId
+                  ? {
+                      ...s,
+                      messages: s.messages.map((m) =>
+                        m.id === assistantMsgId ? { ...m, sources } : m
+                      ),
+                    }
+                  : s
+              )
+            );
+          }
+        );
 
-        if (res.ok) {
-          result = await res.json();
-        } else {
-          throw new Error("Backend generated an error.");
-        }
       } else {
         // 2. Standalone CPU Fallback Simulation
         await new Promise((resolve) => setTimeout(resolve, 1000));
-        result = {
+        const result = {
           prompt: promptText,
-          generated_text: `${promptText} is a wonderful seed. Since the serving backend is offline, this mock text validates the client layout. Please start the FastAPI backend to run local GPT-2 inference.`,
+          generated_text: `${promptText}\n\n[MOCK MODE] Since the serving backend is offline, this mock text validates the client layout. Please start the FastAPI backend to run local GPT-2 inference.`,
           tokens_generated: 30,
           time_taken_seconds: 0.25,
           tokens_per_second: 120.0,
         };
-      }
 
-      // Typewriter streaming reveal animation
-      if (result) {
         const fullText = result.generated_text;
-        const newText = fullText.substring(promptText.length);
+        // Strip prompt from mock response
+        const newText = fullText.includes(`${promptText}\n\n`) ? fullText.split(`${promptText}\n\n`)[1] : fullText;
         const tokens = newText.split(/(\s+)/); // Split by words/whitespaces
-        let currentContent = promptText;
+        let currentContent = "";
 
         for (let i = 0; i < tokens.length; i++) {
-          if (stopRef.current) break;
+          if (abortControllerRef.current?.signal.aborted) break;
 
           currentContent += tokens[i];
           setSessions((prev) =>
@@ -293,7 +351,7 @@ export default function Home() {
                           tokensPerSecond: result.tokens_per_second,
                           tokensGenerated: result.tokens_generated,
                           useCache: settings.useCache,
-                          sources: result.sources || null,
+                          sources: null,
                         }
                       : m
                   ),
@@ -301,6 +359,7 @@ export default function Home() {
               : s
           )
         );
+        setIsGenerating(false);
       }
     } catch (e) {
       console.error("Failed to generate response:", e);
@@ -313,7 +372,7 @@ export default function Home() {
                   m.id === assistantMsgId
                     ? {
                         ...m,
-                        content: "Error: Failed to connect to the model inference service.",
+                        content: m.content + "\n\n[Error: Failed to connect or generation aborted]",
                         isStreaming: false,
                       }
                     : m
@@ -322,7 +381,6 @@ export default function Home() {
             : s
         )
       );
-    } finally {
       setIsGenerating(false);
     }
   };
@@ -345,6 +403,7 @@ export default function Home() {
 
   return (
     <div className="flex w-full h-dvh overflow-hidden bg-background text-foreground transition-colors duration-500 font-sans">
+      <BootSequence />
       <ParticleBackground />
 
       {/* Collapsible Sidebar (Desktop) */}
@@ -387,6 +446,7 @@ export default function Home() {
                       { id: "chat", name: "Playground Chat", icon: MessageSquare },
                       { id: "analytics", name: "Training Telemetry", icon: LineChart },
                       { id: "architecture", name: "Model Architecture", icon: Cpu },
+                      { id: "teach", name: "Teach Mode", icon: GraduationCap },
                     ] as const).map((item) => {
                       const isActive = currentNav === item.id;
                       const Icon = item.icon;
@@ -536,12 +596,17 @@ export default function Home() {
               onStop={handleStop}
               onRegenerate={messages.length >= 2 ? handleRegenerate : undefined}
               lastAssistantMessage={lastAssistantMessage}
+              isOffline={backendInfo?.status === "offline"}
+              webSearch={settings.webSearch || false}
+              onToggleWebSearch={(val) => handleSettingsChange({ ...settings, webSearch: val })}
             />
           </div>
         ) : currentNav === "analytics" ? (
-          <AnalyticsView backendUrl={BACKEND_URL} />
-        ) : (
+          <AnalyticsView backendUrl={BACKEND_URL} currentSession={currentSession} />
+        ) : currentNav === "architecture" ? (
           <ArchitectureView />
+        ) : (
+          <TeachView />
         )}
       </div>
 
@@ -550,7 +615,7 @@ export default function Home() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
-        onChange={setSettings}
+        onChange={handleSettingsChange}
         backendInfo={backendInfo}
       />
     </div>

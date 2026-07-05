@@ -192,6 +192,84 @@ def generate_text_simple(
     return idx
 
 
+from typing import Iterator
+
+def generate_stream(
+    model: GPTModel,
+    idx: Tensor,
+    max_new_tokens: int,
+    context_size: int,
+    temperature: float = 0.0,
+    top_k: int | None = None,
+    top_p: float | None = None,
+    repetition_penalty: float = 1.0,
+    eos_id: int | None = None,
+    use_cache: bool = False,
+) -> Iterator[int]:
+    """Yields each generated token id as an integer."""
+    if use_cache:
+        # Pre-fill step: process the initial context prompt to populate the cache
+        idx_cond = idx[:, -context_size:]
+        with torch.no_grad():
+            logits, past_key_values = model(idx_cond, use_cache=True, past_key_values=None)
+        logits = logits[:, -1, :]
+        idx_next = _sample_next_token(
+            logits, temperature, top_k, top_p, repetition_penalty, idx
+        )
+        
+        token_id = idx_next.item()
+        yield token_id
+        
+        if eos_id is not None and token_id == eos_id:
+            return
+            
+        idx = torch.cat((idx, idx_next), dim=1)
+
+        # Decode step: process only the newly generated token at each step
+        for _ in range(max_new_tokens - 1):
+            # Crop cache along the sequence dimension if it exceeds the maximum context length
+            total_len = past_key_values[0][0].shape[-2] + 1
+            if total_len > context_size:
+                past_key_values = [
+                    (k[:, :, -(context_size - 1):, :], v[:, :, -(context_size - 1):, :])
+                    for k, v in past_key_values
+                ]
+
+            with torch.no_grad():
+                logits, past_key_values = model(idx_next, use_cache=True, past_key_values=past_key_values)
+            logits = logits[:, -1, :]
+            idx_next = _sample_next_token(
+                logits, temperature, top_k, top_p, repetition_penalty, idx
+            )
+
+            token_id = idx_next.item()
+            yield token_id
+
+            if eos_id is not None and token_id == eos_id:
+                break
+            idx = torch.cat((idx, idx_next), dim=1)
+            
+    else:
+        # Standard generation (no cache) - recalculates everything at each step
+        for _ in range(max_new_tokens):
+            idx_cond = idx[:, -context_size:]
+
+            with torch.no_grad():
+                logits = model(idx_cond)
+            logits = logits[:, -1, :]
+
+            idx_next = _sample_next_token(
+                logits, temperature, top_k, top_p, repetition_penalty, idx
+            )
+
+            token_id = idx_next.item()
+            yield token_id
+
+            if eos_id is not None and token_id == eos_id:
+                break
+
+            idx = torch.cat((idx, idx_next), dim=1)
+
 def generate(
     model: GPTModel,
     idx: Tensor,
@@ -221,60 +299,11 @@ def generate(
     Returns:
         Generated token sequence, shape (batch, seq_len + generated_tokens).
     """
-    if use_cache:
-        # Pre-fill step: process the initial context prompt to populate the cache
-        idx_cond = idx[:, -context_size:]
-        with torch.no_grad():
-            logits, past_key_values = model(idx_cond, use_cache=True, past_key_values=None)
-        logits = logits[:, -1, :]
-        idx_next = _sample_next_token(
-            logits, temperature, top_k, top_p, repetition_penalty, idx
-        )
-        
-        # Append first generated token
-        if eos_id is not None and idx_next.item() == eos_id:
-            return torch.cat((idx, idx_next), dim=1)
+    for token_id in generate_stream(
+        model, idx, max_new_tokens, context_size, temperature, top_k, top_p, repetition_penalty, eos_id, use_cache
+    ):
+        idx_next = torch.tensor([[token_id]], dtype=torch.long, device=idx.device)
         idx = torch.cat((idx, idx_next), dim=1)
-
-        # Decode step: process only the newly generated token at each step
-        for _ in range(max_new_tokens - 1):
-            # Crop cache along the sequence dimension if it exceeds the maximum context length
-            total_len = past_key_values[0][0].shape[-2] + 1
-            if total_len > context_size:
-                past_key_values = [
-                    (k[:, :, -(context_size - 1):, :], v[:, :, -(context_size - 1):, :])
-                    for k, v in past_key_values
-                ]
-
-            with torch.no_grad():
-                logits, past_key_values = model(idx_next, use_cache=True, past_key_values=past_key_values)
-            logits = logits[:, -1, :]
-            idx_next = _sample_next_token(
-                logits, temperature, top_k, top_p, repetition_penalty, idx
-            )
-
-            if eos_id is not None and idx_next.item() == eos_id:
-                break
-            idx = torch.cat((idx, idx_next), dim=1)
-            
-    else:
-        # Standard generation (no cache) - recalculates everything at each step
-        for _ in range(max_new_tokens):
-            idx_cond = idx[:, -context_size:]
-
-            with torch.no_grad():
-                logits = model(idx_cond)
-            logits = logits[:, -1, :]
-
-            idx_next = _sample_next_token(
-                logits, temperature, top_k, top_p, repetition_penalty, idx
-            )
-
-            if eos_id is not None and idx_next.item() == eos_id:
-                break
-
-            idx = torch.cat((idx, idx_next), dim=1)
-
     return idx
 
 
