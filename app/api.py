@@ -688,3 +688,20 @@ def get_feedback():
                 except:
                     pass
     return {"feedback": results}
+
+@app.get("/starter-dataset")
+def get_starter_dataset():
+    """Get the starter instructions dataset."""
+    dataset_file = os.path.join("data", "starter_instructions.jsonl")
+    if not os.path.exists(dataset_file):
+        raise HTTPException(status_code=404, detail="Starter dataset not found")
+        
+    results = []
+    with open(dataset_file, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                try:
+                    results.append(json.loads(line))
+                except:
+                    pass
+    return {"dataset": results}

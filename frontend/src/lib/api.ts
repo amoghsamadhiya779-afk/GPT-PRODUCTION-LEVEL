@@ -190,5 +190,13 @@ export const api = {
       if (res.ok) return await res.json();
     } catch (e) {}
     return { feedback: [] };
+  },
+
+  async getStarterDataset() {
+    try {
+      const res = await fetch(`${BACKEND_URL}/starter-dataset`);
+      if (res.ok) return await res.json();
+    } catch (e) {}
+    return { dataset: [] };
   }
 };

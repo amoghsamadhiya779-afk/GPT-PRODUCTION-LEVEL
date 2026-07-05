@@ -67,6 +67,19 @@ export default function TeachView() {
     }
   };
 
+  const loadStarterDataset = async () => {
+    try {
+      const data = await api.getStarterDataset();
+      if (data.dataset && data.dataset.length > 0) {
+        setExamples(data.dataset);
+      } else {
+        alert("Starter dataset is empty or not found.");
+      }
+    } catch (err: any) {
+      alert("Failed to load starter dataset.");
+    }
+  };
+
   const startTraining = async () => {
     setError(null);
     if (!adapterName.match(/^[a-zA-Z0-9_-]+$/)) {
@@ -138,13 +151,22 @@ export default function TeachView() {
             <div className="bg-surface border border-border rounded-xl p-6 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-medium text-foreground">Training Examples</h3>
-                <button
-                  onClick={loadFeedback}
-                  className="flex items-center gap-2 text-xs font-medium text-accent hover:text-accent/80 transition-colors"
-                >
-                  <FileJson className="w-4 h-4" />
-                  Load from Feedback
-                </button>
+                <div className="flex gap-4">
+                  <button
+                    onClick={loadStarterDataset}
+                    className="flex items-center gap-2 text-xs font-medium text-accent hover:text-accent/80 transition-colors"
+                  >
+                    <FileJson className="w-4 h-4" />
+                    Load Starter Dataset
+                  </button>
+                  <button
+                    onClick={loadFeedback}
+                    className="flex items-center gap-2 text-xs font-medium text-accent hover:text-accent/80 transition-colors"
+                  >
+                    <FileJson className="w-4 h-4" />
+                    Load from Feedback
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
