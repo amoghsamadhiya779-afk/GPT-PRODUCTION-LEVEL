@@ -28,6 +28,7 @@ COPY app/ /app/app/
 COPY model/ /app/model/
 COPY training/ /app/training/
 COPY configs/ /app/configs/
+COPY data/ /app/data/
 
 # Expose server ports
 EXPOSE 7860
