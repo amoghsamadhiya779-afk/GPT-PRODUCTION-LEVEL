@@ -132,7 +132,7 @@ export default function Home() {
     }
   };
 
-  const handleSelectPersona = (persona: "Math Tutor" | "Physics Helper" | "General Assistant") => {
+  const handleSelectPersona = async (persona: "Math Tutor" | "Physics Helper" | "General Assistant") => {
     const welcomeMsg: Message = {
       id: "welcome-" + Date.now(),
       role: "assistant",
@@ -151,9 +151,23 @@ export default function Home() {
           : s
       )
     );
+
+    try {
+      let adapterName = "";
+      if (persona === "Math Tutor") adapterName = "math_adapter";
+      else if (persona === "Physics Helper") adapterName = "physics_adapter";
+      else if (persona === "General Assistant") adapterName = "general_adapter";
+      
+      if (adapterName) {
+        await api.activateAdapter(adapterName);
+        handleSettingsChange({ ...settings, activeAdapter: adapterName });
+      }
+    } catch (e) {
+      console.warn(`Adapter for ${persona} not found or failed to activate. Falling back to base model.`);
+    }
   };
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
     const newId = String(Date.now());
     const newSession: ChatSession = {
       id: newId,
@@ -164,11 +178,40 @@ export default function Home() {
     setSessions([newSession, ...sessions]);
     setCurrentSessionId(newId);
     setCurrentNav("chat");
+
+    try {
+      await api.deactivateAdapter();
+      handleSettingsChange({ ...settings, activeAdapter: null });
+    } catch (e) {
+      console.warn("Failed to deactivate adapter on new chat");
+    }
   };
 
-  const handleSelectChat = (id: string) => {
+  const handleSelectChat = async (id: string) => {
     setCurrentSessionId(id);
     setCurrentNav("chat");
+
+    const targetSession = sessions.find((s) => s.id === id);
+    if (targetSession) {
+      try {
+        if (!targetSession.persona) {
+          await api.deactivateAdapter();
+          handleSettingsChange({ ...settings, activeAdapter: null });
+        } else {
+          let adapterName = "";
+          if (targetSession.persona === "Math Tutor") adapterName = "math_adapter";
+          else if (targetSession.persona === "Physics Helper") adapterName = "physics_adapter";
+          else if (targetSession.persona === "General Assistant") adapterName = "general_adapter";
+          
+          if (adapterName) {
+            await api.activateAdapter(adapterName);
+            handleSettingsChange({ ...settings, activeAdapter: adapterName });
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to switch adapter for session:", targetSession.persona);
+      }
+    }
   };
 
   const handleStop = () => {
@@ -599,6 +642,7 @@ export default function Home() {
               isOffline={backendInfo?.status === "offline"}
               webSearch={settings.webSearch || false}
               onToggleWebSearch={(val) => handleSettingsChange({ ...settings, webSearch: val })}
+              disabled={!currentSession?.persona}
             />
           </div>
         ) : currentNav === "analytics" ? (

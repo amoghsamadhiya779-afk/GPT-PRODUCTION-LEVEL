@@ -251,10 +251,9 @@ def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources:
         return base_prompt, sources
 
     template_start = (
-        "Below is an instruction that describes a task, paired with an input that provides further context. "
+        "Below is an instruction that describes a task. "
         "Write a response that appropriately completes the request.\n\n"
-        f"### Instruction:\n{original_prompt}\n\n"
-        "### Input:\nWeb Search Context:\n"
+        f"### Instruction:\n{original_prompt}\n\nWeb Search Context:\n"
     )
     template_end = "\n\n### Response:\n"
     
