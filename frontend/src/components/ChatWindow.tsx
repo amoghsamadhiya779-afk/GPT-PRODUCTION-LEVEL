@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useTheme } from "./ThemeProvider";
-import { Cpu, User, Sparkles, AlertTriangle, GraduationCap, Atom, Compass, ThumbsUp, ThumbsDown, Edit3, Check } from "lucide-react";
+import { Cpu, User, Sparkles, AlertTriangle, GraduationCap, Atom, Compass, ThumbsUp, ThumbsDown, Edit3, Check, ArrowLeft } from "lucide-react";
 import Logo from "@/components/Logo";
 import { api } from "@/lib/api";
 
@@ -89,6 +89,7 @@ interface ChatWindowProps {
   isGenerating: boolean;
   persona?: "Math Tutor" | "Physics Helper" | "General Assistant" | null;
   onSelectPersona?: (persona: "Math Tutor" | "Physics Helper" | "General Assistant") => void;
+  onClearPersona?: () => void;
   onSelectPrompt?: (promptText: string) => void;
 }
 
@@ -97,6 +98,7 @@ export default function ChatWindow({
   isGenerating, 
   persona, 
   onSelectPersona, 
+  onClearPersona,
   onSelectPrompt 
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -209,7 +211,19 @@ export default function ChatWindow({
           </div>
         ) : (
           /* Message List */
-          <div className="space-y-6 md:space-y-8">
+          <div className="space-y-6 md:space-y-8 w-full">
+            {persona && onClearPersona && (
+              <div className="w-full flex justify-center mb-2">
+                <button 
+                  onClick={onClearPersona}
+                  aria-label="Exit Persona"
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border bg-surface hover:bg-elevated/40 text-xs text-secondary hover:text-primary transition-all"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  Exit {persona}
+                </button>
+              </div>
+            )}
             {messages.map((message) => {
               const isUser = message.role === "user";
               return (

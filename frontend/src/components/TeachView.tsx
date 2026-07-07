@@ -44,7 +44,7 @@ export default function TeachView() {
       } catch (err) {
         console.error(err);
       }
-    }, 2000);
+    }, 500);
 
     return () => clearInterval(intervalRef.current);
   }, [jobId, isTraining]);
@@ -294,7 +294,7 @@ export default function TeachView() {
               </div>
             </div>
 
-            {isTraining && status && (
+            {status && (
               <div className="bg-surface border border-border rounded-xl p-6 shadow-sm overflow-hidden relative">
                 <h3 className="text-sm font-medium text-foreground mb-4">Training Progress</h3>
                 
