@@ -230,8 +230,11 @@ def main():
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Trainable parameters: {trainable_params:,}")
 
-    physical_batch_size = 4
-    accum_steps = 32 // physical_batch_size
+    if args.model_size == "medium":
+        physical_batch_size = 1
+    else:
+        physical_batch_size = 4
+    accum_steps = max(1, 32 // physical_batch_size)
     
     train_loader = DataLoader(
         train_ds, 
