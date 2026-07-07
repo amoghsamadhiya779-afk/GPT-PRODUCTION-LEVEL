@@ -113,6 +113,34 @@ async def lifespan(app: FastAPI):
             app.state.parameter_count = engine.parameter_count
             app.state.device = str(engine.device)
             logger.info("Model loaded successfully (%d parameters)", engine.parameter_count)
+            
+            # --- DEFAULT_ADAPTER HOOK ---
+            default_adapter = os.environ.get("DEFAULT_ADAPTER")
+            if default_adapter:
+                adapter_path = os.path.join("checkpoints", "adapters", f"{default_adapter}.pt")
+                if os.path.exists(adapter_path):
+                    logger.info(f"Attempting to activate DEFAULT_ADAPTER: {default_adapter}")
+                    try:
+                        adapter_ckpt = torch.load(adapter_path, map_location="cpu", weights_only=True)
+                        adapter_cfg = adapter_ckpt.get("model_config", {})
+                        engine_cfg = engine.model_config
+                        
+                        if adapter_cfg.get("model_size") != engine_cfg.get("model_size") or \
+                           adapter_cfg.get("n_layers") != engine_cfg.get("n_layers") or \
+                           adapter_cfg.get("emb_dim") != engine_cfg.get("emb_dim"):
+                            logger.warning(f"DEFAULT_ADAPTER mismatch! Adapter config: {adapter_cfg.get('model_size')}, Engine config: {engine_cfg.get('model_size')}. Skipping activation.")
+                        else:
+                            from model.lora import inject_lora
+                            lora_r = adapter_ckpt.get("lora_r", 16)
+                            lora_alpha = adapter_ckpt.get("lora_alpha", 32.0)
+                            inject_lora(engine.model, r=lora_r, alpha=lora_alpha, target_modules=["W_query", "W_value"])
+                            engine.model.load_state_dict(adapter_ckpt["model_state_dict"], strict=False)
+                            logger.info(f"Successfully auto-activated DEFAULT_ADAPTER: {default_adapter}")
+                    except Exception as e:
+                        logger.warning(f"Failed to auto-activate DEFAULT_ADAPTER: {e}")
+                else:
+                    logger.warning(f"DEFAULT_ADAPTER {default_adapter} specified but file {adapter_path} not found.")
+            # ---------------------------
         except Exception as e:
             logger.error("Failed to load checkpoint: %s", e)
             app.state.status = "error"

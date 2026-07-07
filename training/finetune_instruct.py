@@ -29,13 +29,13 @@ logger = logging.getLogger(__name__)
 
 EVAL_PROMPTS = [
     "what is gravity",
-    "write a haiku about nature",
     "who are you",
+    "hi",
+    "write a haiku about nature",
     "explain what a neural network is",
     "write a joke",
     "what is the capital of France",
-    "how do airplanes fly",
-    "summarize the plot of Cinderella in one sentence"
+    "summarize Cinderella in one sentence"
 ]
 
 def format_alpaca(instruction: str, response: str) -> str:
@@ -69,23 +69,6 @@ class InstructDataset(Dataset):
     def __getitem__(self, idx):
         return self.input_ids[idx], self.target_ids[idx]
 
-class PretrainDataset(Dataset):
-    def __init__(self, txt, tokenizer, max_length=256, stride=128):
-        self.input_ids = []
-        self.target_ids = []
-        token_ids = tokenizer.encode(txt, allowed_special={"<|endoftext|>"})
-        for i in range(0, len(token_ids) - max_length, stride):
-            input_chunk = token_ids[i : i + max_length]
-            target_chunk = token_ids[i + 1 : i + max_length + 1]
-            self.input_ids.append(torch.tensor(input_chunk))
-            self.target_ids.append(torch.tensor(target_chunk))
-
-    def __len__(self):
-        return len(self.input_ids)
-
-    def __getitem__(self, idx):
-        return self.input_ids[idx], self.target_ids[idx]
-
 def collate_fn_instruct(batch, pad_token_id):
     inputs, targets = zip(*batch)
     max_len = max([x.size(0) for x in inputs])
@@ -106,10 +89,6 @@ def collate_fn_instruct(batch, pad_token_id):
         padded_targets.append(tgt)
         
     return torch.stack(padded_inputs), torch.stack(padded_targets)
-
-def collate_fn_pretrain(batch):
-    inputs, targets = zip(*batch)
-    return torch.stack(inputs), torch.stack(targets)
 
 def get_lr(step: int, max_steps: int, max_lr: float, min_lr: float = 1e-6) -> float:
     warmup_steps = int(0.05 * max_steps)
@@ -153,36 +132,14 @@ def evaluate_generation(model, tokenizer, device, context_size):
         logger.info("-" * 40)
     model.train()
 
-def map_fields(record):
-    keys = list(record.keys())
-    keys_lower = [k.lower() for k in keys]
-    
-    instruction = None
-    response = None
-    
-    prompt_candidates = ["instruction", "prompt", "question", "input"]
-    response_candidates = ["response", "completion", "answer", "output", "correction"]
-    
-    for cand in prompt_candidates:
-        if cand in keys_lower:
-            instruction = record[keys[keys_lower.index(cand)]]
-            break
-            
-    for cand in response_candidates:
-        if cand in keys_lower:
-            response = record[keys[keys_lower.index(cand)]]
-            break
-            
-    if instruction and response:
-        return {"instruction": str(instruction), "response": str(response)}
-    return None
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default="cpu", help="Device to use (cpu, cuda)")
-    parser.add_argument("--data", type=str, default=None, help="Path to local dataset file. If None, uses Dolly-15k.")
-    parser.add_argument("--adapter_name", type=str, default="dolly_instruct", help="Name of saved adapter .pt file.")
-    parser.add_argument("--epochs", type=int, default=5, help="Number of epochs to train.")
+    parser.add_argument("--data", type=str, default="data/sft_mix.jsonl", help="Path to local dataset file.")
+    parser.add_argument("--model-size", type=str, default="small", help="Base model size (small, medium, tiny).")
+    parser.add_argument("--epochs", type=int, default=2, help="Number of epochs to train.")
+    parser.add_argument("--max-steps", type=int, default=None, help="Stop after this many optimization steps.")
+    parser.add_argument("--resume", action="store_true", help="Resume from latest adapter checkpoint if exists.")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -191,98 +148,55 @@ def main():
     tokenizer = GPT2Tokenizer()
     pad_id = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
 
-    checkpoint_path = os.path.join("checkpoints", "best_model.pt")
+    checkpoint_dir = "checkpoints" if args.model_size != "tiny" else "checkpoints_tiny"
+    checkpoint_path = os.path.join(checkpoint_dir, "best_model.pt")
     if not os.path.exists(checkpoint_path):
         logger.error(f"Base checkpoint not found at {checkpoint_path}")
         sys.exit(1)
         
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     model_config = checkpoint["model_config"]
+    
+    if model_config.get("model_size", "small") != args.model_size:
+        logger.warning(f"Warning: model_size config in checkpoint ({model_config.get('model_size')}) does not match --model-size {args.model_size}")
+        
     max_length = model_config.get("context_length", 256)
 
     examples = []
-    is_pretrain = False
     
-    if args.data is None:
-        logger.info("Downloading and filtering Databricks Dolly-15k...")
-        dataset = load_dataset("databricks/databricks-dolly-15k", split="train")
-        valid_categories = {"general_qa", "brainstorming", "creative_writing"}
-        for row in dataset:
-            if row["category"] not in valid_categories: continue
-            resp_tokens = tokenizer.text_to_token_ids(row["response"]).squeeze(0)
-            if resp_tokens.size(0) > 150: continue
-            examples.append({"instruction": row["instruction"], "response": row["response"]})
-    else:
-        for data_path in args.data.split(","):
-            data_path = data_path.strip()
-            if not data_path: continue
-            logger.info(f"Loading local dataset from: {data_path}")
-            ext = data_path.split('.')[-1].lower()
-            if ext == 'txt':
-                is_pretrain = True
-                with open(data_path, "r", encoding="utf-8") as f:
-                    raw_text = f.read()
-            elif ext in ['json', 'jsonl']:
-                data = []
-                with open(data_path, "r", encoding="utf-8") as f:
-                    if ext == 'jsonl':
-                        data = [json.loads(line) for line in f if line.strip()]
-                    else:
-                        data = json.load(f)
-                
-                if "feedback" in data_path.lower():
-                    for row in data:
-                        if row.get("correction"):
-                            examples.append({"instruction": row["prompt"], "response": row["correction"]})
-                else:
-                    for row in data:
-                        mapped = map_fields(row)
-                        if mapped:
-                            examples.append(mapped)
-            elif ext == 'csv':
-                with open(data_path, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        mapped = map_fields(row)
-                        if mapped:
-                            examples.append(mapped)
-            else:
-                logger.error(f"Unsupported file format: {ext}")
-                sys.exit(1)
+    for data_path in args.data.split(","):
+        data_path = data_path.strip()
+        if not data_path: continue
+        logger.info(f"Loading local dataset from: {data_path}")
+        with open(data_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip(): continue
+                item = json.loads(line)
+                examples.append(item)
 
-    if not is_pretrain:
-        seen = set()
-        clean_examples = []
-        token_lengths = []
-        for ex in examples:
-            pair_hash = (ex["instruction"].strip(), ex["response"].strip())
-            if pair_hash in seen:
-                continue
-            
-            full_text = format_alpaca(ex["instruction"], ex["response"])
-            tokens = tokenizer.encode(full_text, allowed_special={"<|endoftext|>"})
-            
-            if len(tokens) <= max_length:
-                seen.add(pair_hash)
-                clean_examples.append(ex)
-                token_lengths.append(len(tokens))
-                
-        examples = clean_examples
-        if not examples:
-            logger.error("No valid examples found after filtering!")
-            sys.exit(1)
-            
-        avg_tokens = sum(token_lengths) / len(token_lengths)
-        max_tokens = max(token_lengths)
-        logger.info(f"Dataset Stats: {len(examples)} instruction pairs")
-        logger.info(f"Avg tokens: {avg_tokens:.1f}, Max tokens: {max_tokens}")
+    seen = set()
+    clean_examples = []
+    for ex in examples:
+        pair_hash = (ex["instruction"].strip(), ex["response"].strip())
+        if pair_hash in seen:
+            continue
         
-        train_ds = InstructDataset(examples, tokenizer, max_length=max_length)
-        collate = lambda b: collate_fn_instruct(b, pad_id)
-    else:
-        train_ds = PretrainDataset(raw_text, tokenizer, max_length=max_length, stride=max_length)
-        collate = collate_fn_pretrain
-        logger.info(f"Dataset Stats: {len(train_ds)} pretraining chunks")
+        full_text = format_alpaca(ex["instruction"], ex["response"])
+        tokens = tokenizer.encode(full_text, allowed_special={"<|endoftext|>"})
+        
+        if len(tokens) <= max_length:
+            seen.add(pair_hash)
+            clean_examples.append(ex)
+            
+    examples = clean_examples
+    if not examples:
+        logger.error("No valid examples found after filtering!")
+        sys.exit(1)
+        
+    logger.info(f"Dataset Stats: {len(examples)} instruction pairs")
+    
+    train_ds = InstructDataset(examples, tokenizer, max_length=max_length)
+    collate = lambda b: collate_fn_instruct(b, pad_id)
 
     logger.info(f"Loading base model from {checkpoint_path}")
     gpt_cfg_dict = model_config.copy()
@@ -294,10 +208,24 @@ def main():
     logger.info("=== EVALUATION (BEFORE LORA) ===")
     evaluate_generation(model, tokenizer, device, max_length)
 
-    logger.info("Injecting LoRA adapters (r=8, alpha=16) into W_query and W_value...")
-    inject_lora(model, r=8, alpha=16.0, target_modules=["W_query", "W_value"])
+    logger.info("Injecting LoRA adapters (r=16, alpha=32) into W_query and W_value...")
+    inject_lora(model, r=16, alpha=32.0, target_modules=["W_query", "W_value"])
     mark_only_lora_as_trainable(model)
     model.to(device)
+
+    adapters_dir = os.path.join("checkpoints", "adapters")
+    os.makedirs(adapters_dir, exist_ok=True)
+    adapter_name = f"sft_v1_{args.model_size}"
+    adapter_path = os.path.join(adapters_dir, f"{adapter_name}.pt")
+    
+    global_step = 0
+    if args.resume and os.path.exists(adapter_path):
+        logger.info(f"Resuming from checkpoint {adapter_path}")
+        lora_ckpt = torch.load(adapter_path, map_location=device, weights_only=True)
+        model.load_state_dict(lora_ckpt["model_state_dict"], strict=False)
+        if "step" in lora_ckpt:
+            global_step = lora_ckpt["step"]
+            logger.info(f"Resumed from step {global_step}")
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Trainable parameters: {trainable_params:,}")
@@ -324,22 +252,22 @@ def main():
 
     os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
     mlflow.set_tracking_uri("sqlite:///mlflow.db")
-    mlflow.set_experiment("Dolly-15k Instruction Tuning" if args.data is None else "Local Dataset Tuning")
+    mlflow.set_experiment("LoRA Instruction Tuning")
     if mlflow.active_run() is not None:
         mlflow.end_run()
-    mlflow.start_run(run_name=args.adapter_name)
+    mlflow.start_run(run_name=adapter_name)
     
     mlflow.log_params({
         "epochs": epochs,
         "effective_batch_size": 32,
         "learning_rate": lr,
-        "lora_r": 8,
-        "lora_alpha": 16.0,
-        "dataset_size": len(train_ds)
+        "lora_r": 16,
+        "lora_alpha": 32.0,
+        "dataset_size": len(train_ds),
+        "model_size": args.model_size
     })
 
     logger.info("Starting training loop...")
-    global_step = 0
     start_time = time.time()
     
     for epoch in range(epochs):
@@ -376,6 +304,25 @@ def main():
                     logger.info(f"Epoch {epoch+1}/{epochs} | Step {global_step}/{total_steps} | Loss: {loss_val:.4f} | LR: {current_lr:.2e}")
                 
                 global_step += 1
+                
+                # Resumable checkpointing every 200 steps
+                if global_step % 200 == 0:
+                    checkpoint_out = {
+                        "model_config": model_config,
+                        "model_state_dict": get_lora_state_dict(model),
+                        "is_lora": True,
+                        "lora_r": 16,
+                        "lora_alpha": 32.0,
+                        "step": global_step
+                    }
+                    torch.save(checkpoint_out, adapter_path)
+                    logger.info(f"Saved resumable checkpoint at step {global_step} to {adapter_path}")
+                
+                if args.max_steps is not None and global_step >= args.max_steps:
+                    logger.info(f"Reached max steps: {args.max_steps}. Stopping early.")
+                    break
+        if args.max_steps is not None and global_step >= args.max_steps:
+            break
 
     elapsed = time.time() - start_time
     logger.info(f"Training complete in {elapsed:.1f}s")
@@ -384,20 +331,33 @@ def main():
     logger.info("=== EVALUATION (AFTER LORA) ===")
     evaluate_generation(model, tokenizer, device, max_length)
 
-    adapters_dir = os.path.join("checkpoints", "adapters")
-    os.makedirs(adapters_dir, exist_ok=True)
-    adapter_path = os.path.join(adapters_dir, f"{args.adapter_name}.pt")
+    logger.info("=== POST-TRAINING LoRA CHECK ===")
+    from model.lora import LoRALinear
+    lora_modules_found = 0
+    total_delta_norm = 0.0
     
+    for name, module in model.named_modules():
+        if isinstance(module, LoRALinear):
+            lora_modules_found += 1
+            # L2 norm of (lora_B @ lora_A)
+            delta = module.lora_B @ module.lora_A
+            total_delta_norm += delta.norm().item()
+            
+    assert lora_modules_found > 0, "No LoRA modules found in the model!"
+    logger.info(f"Found {lora_modules_found} LoRA modules. Sum of delta L2 norms: {total_delta_norm:.6f}")
+    assert total_delta_norm > 0, "LoRA delta is exactly zero, the adapter was not trained or not applied!"
+
     checkpoint_out = {
         "model_config": model_config,
         "model_state_dict": get_lora_state_dict(model),
         "is_lora": True,
-        "lora_r": 8,
-        "lora_alpha": 16.0
+        "lora_r": 16,
+        "lora_alpha": 32.0,
+        "step": global_step
     }
     
     torch.save(checkpoint_out, adapter_path)
-    logger.info(f"Successfully saved LoRA adapter to {adapter_path}")
+    logger.info(f"Successfully saved final LoRA adapter to {adapter_path}")
 
 if __name__ == "__main__":
     main()

@@ -52,3 +52,5 @@ venv_prod/
 frontend/node_modules/
 data/feedback.jsonl
 .env
+
+!checkpoints/adapters/*.pt
