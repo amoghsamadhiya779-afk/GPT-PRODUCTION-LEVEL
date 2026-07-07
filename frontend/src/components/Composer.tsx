@@ -2,7 +2,7 @@
 
 import React, { useRef, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowUp, Paperclip, Square, RotateCcw, Copy, Check } from "lucide-react";
+import { ArrowUp, Paperclip, Square, RotateCcw, Copy, Check, Sparkles } from "lucide-react";
 
 interface ComposerProps {
   onSend: (text: string) => void;
