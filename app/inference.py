@@ -88,6 +88,10 @@ class GPTInferenceEngine:
         top_k: int = 50,
         top_p: float | None = None,
         repetition_penalty: float = 1.0,
+        frequency_penalty: float = 0.0,
+        presence_penalty: float = 0.0,
+        no_repeat_ngram_size: int = 0,
+        min_new_tokens: int = 0,
         use_cache: bool = True,
     ) -> dict:
         """Generate text from a prompt and return the output with latency statistics.
@@ -122,6 +126,10 @@ class GPTInferenceEngine:
             top_k=top_k,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
+            min_new_tokens=min_new_tokens,
             eos_id=eos_id,
             use_cache=use_cache,
         )
@@ -151,6 +159,10 @@ class GPTInferenceEngine:
         top_k: int = 50,
         top_p: float | None = None,
         repetition_penalty: float = 1.0,
+        frequency_penalty: float = 0.0,
+        presence_penalty: float = 0.0,
+        no_repeat_ngram_size: int = 0,
+        min_new_tokens: int = 0,
         use_cache: bool = True,
     ):
         """Generator that yields newly generated text chunks, latency, and token count."""
@@ -170,6 +182,10 @@ class GPTInferenceEngine:
             top_k=top_k,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
+            min_new_tokens=min_new_tokens,
             eos_id=eos_id,
             use_cache=use_cache,
         ):

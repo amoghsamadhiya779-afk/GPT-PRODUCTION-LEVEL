@@ -56,6 +56,9 @@ def test_web_search_budget(client, monkeypatch):
     
     monkeypatch.setattr("app.search.web_search", mock_web_search)
     
+    # Force DummyEngine context size to prevent CI/local cached model differences
+    app.state.engine.context_size = 256
+    
     # Generate request with web search
     payload = {
         "prompt": "Test query",
@@ -78,6 +81,18 @@ def test_web_search_budget(client, monkeypatch):
     
     # Budget leaves room for max_new_tokens(100) + fixed_tokens(~50) -> ~106 left out of 256
     assert total_snippet_tokens < 120 
+    
+    # Assert actual invariant on the final reconstructed prompt
+    template_start = (
+        "Below is an instruction that describes a task. "
+        "Write a response that appropriately completes the request.\n\n"
+        f"### Instruction:\nTest query\n\nWeb Search Context:\n"
+    )
+    template_end = "\n\n### Response:\n"
+    context_str = "\n".join([f"- {s}" for s in snippet_texts])
+    final_prompt = template_start + context_str + template_end
+    
+    assert len(enc.encode(final_prompt)) + 100 <= 256
     
     # Generate stream
     resp_stream = client.post("/generate/stream", json=payload)
@@ -132,7 +147,7 @@ def test_generate_stream_equivalence(client):
         pass
         
     app.state.engine = MockDummyEngine()
-    resp = client.post("/generate/stream", json={"prompt": "test", "max_new_tokens": 5})
+    resp = client.post("/generate/stream", json={"prompt": "test", "max_new_tokens": 5, "min_new_tokens": 0})
     assert resp.status_code == 503
     
     # 2. Setup a temporary valid engine to test streaming equivalence
@@ -158,8 +173,9 @@ def test_generate_stream_equivalence(client):
     
     try:
         req_payload = {
-            "prompt": "Hello",
+            "prompt": "This is a stream test",
             "max_new_tokens": 5,
+            "min_new_tokens": 0,
             "temperature": 0.0, # greedy for deterministic output
         }
         
@@ -168,7 +184,7 @@ def test_generate_stream_equivalence(client):
         assert resp1.status_code == 200
         text_full = resp1.json()["generated_text"]
         
-        ans1 = text_full.split("Hello\n\n")[-1]
+        ans1 = text_full.split("This is a stream test\n\n")[-1]
             
         # Streamed
         resp2 = client.post("/generate/stream", json=req_payload)

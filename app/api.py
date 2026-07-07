@@ -257,38 +257,37 @@ def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources:
     )
     template_end = "\n\n### Response:\n"
     
-    fixed_tokens = len(enc.encode(template_start)) + len(enc.encode(template_end))
-    available_tokens = context_size - max_new_tokens - fixed_tokens
+    valid_sources = sources.copy()
     
-    if available_tokens <= 0:
-        return base_prompt, []
-
-    valid_sources = []
-    current_context_tokens = 0
-    
-    for src in sources:
-        snippet_text = f"- {src['snippet']}"
-        snippet_tokens = enc.encode(snippet_text)
+    while True:
+        if not valid_sources:
+            return base_prompt, []
+            
+        context_str = "\n".join([f"- {res['snippet']}" for res in valid_sources])
+        prompt_text = template_start + context_str + template_end
         
-        if current_context_tokens + len(snippet_tokens) + 1 <= available_tokens:
-            valid_sources.append(src)
-            current_context_tokens += len(snippet_tokens) + 1
-        elif available_tokens - current_context_tokens > 20:
-            allowed_tokens = available_tokens - current_context_tokens - 1
-            trimmed_snippet = enc.decode(snippet_tokens[:allowed_tokens])
-            trimmed_src = src.copy()
-            trimmed_src['snippet'] = trimmed_snippet.strip() + "..."
-            valid_sources.append(trimmed_src)
-            break
-        else:
+        prompt_tokens = len(enc.encode(prompt_text))
+        if prompt_tokens + max_new_tokens <= context_size:
             break
             
-    if not valid_sources:
-        return base_prompt, []
+        excess = prompt_tokens + max_new_tokens - context_size
         
-    context_str = "\n".join([f"- {res['snippet']}" for res in valid_sources])
-    prompt_text = template_start + context_str + template_end
-    
+        last_src = valid_sources[-1]
+        raw_snippet = last_src['snippet']
+        raw_tokens = enc.encode(raw_snippet)
+        
+        if excess + 2 >= len(raw_tokens):
+            valid_sources.pop()
+        else:
+            trim_len = len(raw_tokens) - excess - 2
+            if trim_len <= 0:
+                valid_sources.pop()
+            else:
+                trimmed = enc.decode(raw_tokens[:trim_len]).strip() + "..."
+                new_src = last_src.copy()
+                new_src['snippet'] = trimmed
+                valid_sources[-1] = new_src
+                
     return prompt_text, valid_sources
 
 
@@ -330,6 +329,10 @@ def generate_text(request: Request, body: GenerationRequest):
             top_k=body.top_k,
             top_p=body.top_p,
             repetition_penalty=body.repetition_penalty,
+            frequency_penalty=body.frequency_penalty,
+            presence_penalty=body.presence_penalty,
+            no_repeat_ngram_size=body.no_repeat_ngram_size,
+            min_new_tokens=body.min_new_tokens,
             use_cache=body.use_cache,
         )
         
@@ -427,6 +430,10 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
                     top_k=body.top_k,
                     top_p=body.top_p,
                     repetition_penalty=body.repetition_penalty,
+                    frequency_penalty=body.frequency_penalty,
+                    presence_penalty=body.presence_penalty,
+                    no_repeat_ngram_size=body.no_repeat_ngram_size,
+                    min_new_tokens=body.min_new_tokens,
                     use_cache=body.use_cache,
                 ):
                     if stop_event.is_set():
