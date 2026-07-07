@@ -14,7 +14,7 @@ import { MessageSquare, LineChart, Cpu, GraduationCap, Settings, Plus, Play, Pau
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import Logo from "@/components/Logo";
 import BootSequence from "@/components/BootSequence";
-import { api } from "@/lib/api";
+import { api, HealthStatus } from "@/lib/api";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
@@ -74,7 +74,7 @@ export default function Home() {
   const [sessions, setSessions] = useState<ChatSession[]>([
     { id: "1", title: "New Playground Session", messages: [], persona: null },
   ]);
-  const [backendInfo, setBackendInfo] = useState<any>(null);
+  const [backendInfo, setBackendInfo] = useState<HealthStatus | null>(null);
   const [isBannerDismissed, setIsBannerDismissed] = useState(false);
   
   const [currentSessionId, setCurrentSessionId] = useState<string>("1");
@@ -92,12 +92,7 @@ export default function Home() {
     const checkHealth = async () => {
       const data = await api.health();
       if (data) {
-        setBackendInfo({
-          status: data.status,
-          checkpoint: data.checkpoint,
-          parameters: data.parameters,
-          device: data.device,
-        });
+        setBackendInfo(data as HealthStatus);
       } else {
           setBackendInfo({
             status: "offline",
@@ -691,7 +686,7 @@ export default function Home() {
         ) : currentNav === "analytics" ? (
           <AnalyticsView backendUrl={BACKEND_URL} currentSession={currentSession} />
         ) : currentNav === "architecture" ? (
-          <ArchitectureView />
+          <ArchitectureView backendInfo={backendInfo} />
         ) : (
           <TeachView />
         )}

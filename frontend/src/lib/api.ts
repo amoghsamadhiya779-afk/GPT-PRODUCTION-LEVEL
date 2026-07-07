@@ -18,6 +18,22 @@ export interface StreamMetrics {
   sources?: { title: string; snippet: string; link: string }[];
 }
 
+export interface HealthStatus {
+  status: string;
+  checkpoint: string;
+  parameters: number;
+  device: string;
+  error_details?: string;
+  uptime_seconds?: number;
+  total_requests?: number;
+  avg_tokens_per_second?: number;
+  model_size?: string;
+  layers?: number;
+  heads?: number;
+  emb_dim?: number;
+  context?: number;
+}
+
 export const api = {
   async health() {
     try {

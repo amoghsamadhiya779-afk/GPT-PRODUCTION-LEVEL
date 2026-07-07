@@ -234,6 +234,11 @@ def health_check():
             "uptime_seconds": uptime,
             "total_requests": total_reqs,
             "avg_tokens_per_second": avg_tokens_per_second,
+            "model_size": getattr(app.state.engine, "model_size", "small") if hasattr(app.state, "engine") else "unknown",
+            "layers": app.state.engine.model_config.get("n_layers", 12) if hasattr(app.state, "engine") and hasattr(app.state.engine, "model_config") else None,
+            "heads": app.state.engine.model_config.get("n_heads", 12) if hasattr(app.state, "engine") and hasattr(app.state.engine, "model_config") else None,
+            "emb_dim": app.state.engine.model_config.get("emb_dim", 768) if hasattr(app.state, "engine") and hasattr(app.state.engine, "model_config") else None,
+            "context": app.state.engine.model_config.get("context_length", 256) if hasattr(app.state, "engine") and hasattr(app.state.engine, "model_config") else None,
         },
     )
 

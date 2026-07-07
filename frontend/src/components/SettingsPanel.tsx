@@ -7,6 +7,8 @@ import { X, Sun, Moon, Cpu, Zap, Activity } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 
+import { HealthStatus } from "@/lib/api";
+
 export interface ModelSettings {
   model: string;
   temperature: number;
@@ -24,12 +26,7 @@ interface SettingsPanelProps {
   onClose: () => void;
   settings: ModelSettings;
   onChange: (settings: ModelSettings) => void;
-  backendInfo?: {
-    status: string;
-    checkpoint: string;
-    parameters: number;
-    device: string;
-  };
+  backendInfo?: HealthStatus | null;
 }
 
 export default function SettingsPanel({

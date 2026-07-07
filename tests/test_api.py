@@ -43,6 +43,11 @@ def test_health_endpoint(client):
     assert "uptime_seconds" in data
     assert "total_requests" in data
     assert "avg_tokens_per_second" in data
+    assert "model_size" in data
+    assert "layers" in data
+    assert "heads" in data
+    assert "emb_dim" in data
+    assert "context" in data
 
 def test_web_search_budget(client, monkeypatch):
     import json
@@ -147,7 +152,7 @@ def test_generate_stream_equivalence(client):
         pass
         
     app.state.engine = MockDummyEngine()
-    resp = client.post("/generate/stream", json={"prompt": "test", "max_new_tokens": 5})
+    resp = client.post("/generate/stream", json={"prompt": "test", "max_new_tokens": 5, "min_new_tokens": 0})
     assert resp.status_code == 503
     
     # 2. Setup a temporary valid engine to test streaming equivalence
@@ -159,6 +164,7 @@ def test_generate_stream_equivalence(client):
         "n_layers": 1,
         "drop_rate": 0.0,
         "qkv_bias": False,
+        "model_size": "tiny",
     }
     model = GPTModel(dummy_cfg)
     checkpoint = {
@@ -173,8 +179,9 @@ def test_generate_stream_equivalence(client):
     
     try:
         req_payload = {
-            "prompt": "Hello",
+            "prompt": "This is a stream test",
             "max_new_tokens": 5,
+            "min_new_tokens": 0,
             "temperature": 0.0, # greedy for deterministic output
         }
         
@@ -183,7 +190,7 @@ def test_generate_stream_equivalence(client):
         assert resp1.status_code == 200
         text_full = resp1.json()["generated_text"]
         
-        ans1 = text_full.split("Hello\n\n")[-1]
+        ans1 = text_full.split("This is a stream test\n\n")[-1]
             
         # Streamed
         resp2 = client.post("/generate/stream", json=req_payload)

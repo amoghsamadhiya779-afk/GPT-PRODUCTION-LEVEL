@@ -19,6 +19,7 @@ class GPTConfig:
     n_layers: int = 12             # Number of transformer blocks
     dropout: float = 0.1           # Dropout rate
     qkv_bias: bool = False         # Bias in Q/K/V projections
+    model_size: str = "small"      # Identifier for the model architecture size
 
     def to_dict(self) -> dict:
         """Convert config to dictionary for compatibility with dict-based APIs."""
@@ -30,6 +31,7 @@ class GPTConfig:
             "n_layers": self.n_layers,
             "drop_rate": self.dropout,
             "qkv_bias": self.qkv_bias,
+            "model_size": self.model_size,
         }
 
 

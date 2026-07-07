@@ -2,8 +2,9 @@
 
 import React from "react";
 import { Cpu, HelpCircle, Layers, Zap, Star } from "lucide-react";
+import { HealthStatus } from "@/lib/api";
 
-export default function ArchitectureView() {
+export default function ArchitectureView({ backendInfo }: { backendInfo?: HealthStatus | null }) {
   const codeAttention = `class MultiHeadAttention(nn.Module):
     def forward(self, x, layer_past=None, use_cache=False):
         b, num_tokens, d_in = x.shape
@@ -37,6 +38,12 @@ export default function ArchitectureView() {
             torch.sqrt(torch.tensor(2.0 / torch.pi)) *
             (x + 0.044715 * torch.pow(x, 3))
         ))`;
+        
+  const sizeTitle = backendInfo?.model_size === "medium" 
+    ? "Medium (355M Parameters)" 
+    : backendInfo?.model_size === "tiny" 
+      ? "Tiny Configuration" 
+      : "Standard Configuration (124M Parameters)";
 
   return (
     <div className="flex-1 overflow-y-auto px-4 md:px-8 py-8 flex flex-col items-center select-none">
@@ -56,15 +63,15 @@ export default function ArchitectureView() {
         <div className="p-5 rounded-2xl border border-border bg-surface/30 backdrop-blur-sm">
           <h3 className="text-sm font-semibold text-primary uppercase tracking-wider mb-4 flex items-center gap-1.5">
             <Star className="w-4 h-4 text-accent" />
-            GPT-2 Standard Configuration (124M Parameters)
+            GPT-2 {sizeTitle}
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
             {[
               { label: "Vocabulary Size", value: "50,257 tokens" },
-              { label: "Context Window", value: "1,024 tokens" },
-              { label: "Embedding Dim (d_in)", value: "768 dimensions" },
-              { label: "Attention Heads", value: "12 heads" },
-              { label: "Transformer Layers", value: "12 blocks" },
+              { label: "Context Window", value: `${backendInfo?.context?.toLocaleString() || "1,024"} tokens` },
+              { label: "Embedding Dim (d_in)", value: `${backendInfo?.emb_dim?.toLocaleString() || "768"} dimensions` },
+              { label: "Attention Heads", value: `${backendInfo?.heads || 12} heads` },
+              { label: "Transformer Layers", value: `${backendInfo?.layers || 12} blocks` },
               { label: "Dropout Rate", value: "10% (0.1)" },
               { label: "Bias Terms", value: "Enabled in QKV projections" },
               { label: "Weight Shares", value: "WTE tied with Head output" },

@@ -31,22 +31,40 @@ def main() -> None:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "transformers", "--quiet"])
         from transformers import GPT2LMHeadModel
 
-    # 2. Download official weights
-    print("  [1/3] Downloading official GPT-2 Small (124M) weights from Hugging Face...")
-    hf_model = GPT2LMHeadModel.from_pretrained("gpt2")
-    hf_sd = hf_model.state_dict()
+    model_size = os.environ.get("MODEL_SIZE", "small").lower()
+    
+    if model_size == "medium":
+        hf_model_name = "gpt2-medium"
+        cfg = GPTConfig(
+            vocab_size=50257,
+            context_length=1024,
+            emb_dim=1024,
+            n_heads=16,
+            n_layers=24,
+            dropout=0.1,
+            qkv_bias=True, 
+        )
+        print(f"  [1/3] Downloading official GPT-2 Medium (355M) weights from Hugging Face...")
+    else:
+        model_size = "small"  # Enforce fallback
+        hf_model_name = "gpt2"
+        cfg = GPTConfig(
+            vocab_size=50257,
+            context_length=1024,
+            emb_dim=768,
+            n_heads=12,
+            n_layers=12,
+            dropout=0.1,
+            qkv_bias=True, 
+        )
+        print(f"  [1/3] Downloading official GPT-2 Small (124M) weights from Hugging Face...")
 
-    # 3. Define matching GPTConfig
-    # Official GPT-2 Small has 1024 context, 768 dim, 12 layers, 12 heads, and uses QKV bias
-    cfg = GPTConfig(
-        vocab_size=50257,
-        context_length=1024,
-        emb_dim=768,
-        n_heads=12,
-        n_layers=12,
-        dropout=0.1,
-        qkv_bias=True, 
-    )
+    # Set model size on config for later serialization/inference
+    cfg.model_size = model_size
+
+    # 2. Download official weights
+    hf_model = GPT2LMHeadModel.from_pretrained(hf_model_name)
+    hf_sd = hf_model.state_dict()
 
     # 4. Initialize our model and get state dict
     model = GPTModel(cfg)
