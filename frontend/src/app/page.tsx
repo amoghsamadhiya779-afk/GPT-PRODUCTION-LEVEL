@@ -10,7 +10,7 @@ import AnalyticsView from "@/components/AnalyticsView";
 import ArchitectureView from "@/components/ArchitectureView";
 import TeachView from "@/components/TeachView";
 import { useTheme } from "@/components/ThemeProvider";
-import { Settings, Cpu, LineChart, Menu, Plus, Activity, MessageSquare, GraduationCap } from "lucide-react";
+import { MessageSquare, LineChart, Cpu, GraduationCap, Settings, Plus, Play, Pause, Activity, Menu, X, AlertTriangle } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import Logo from "@/components/Logo";
 import BootSequence from "@/components/BootSequence";
@@ -31,10 +31,10 @@ export default function Home() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [settings, setSettings] = useState<ModelSettings>({
     model: "gpt-2-small",
-    temperature: 0.8,
+    temperature: 0.7,
     topK: 50,
     topP: 0.9,
-    repetitionPenalty: 1.0,
+    repetitionPenalty: 1.3,
     maxTokens: 100,
     useCache: true,
     webSearch: false,
@@ -44,7 +44,19 @@ export default function Home() {
     try {
       const saved = localStorage.getItem("gptStudioSettings");
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (saved) setSettings(JSON.parse(saved));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Migrate old defaults to new improved defaults
+        let migrated = false;
+        if (parsed.temperature === 0.8) { parsed.temperature = 0.7; migrated = true; }
+        if (parsed.repetitionPenalty === 1.0) { parsed.repetitionPenalty = 1.3; migrated = true; }
+        if (parsed.topP === undefined || parsed.topP === null) { parsed.topP = 0.9; migrated = true; }
+        
+        setSettings(parsed);
+        if (migrated) {
+          localStorage.setItem("gptStudioSettings", JSON.stringify(parsed));
+        }
+      }
     } catch (e) {}
   }, []);
 
@@ -57,20 +69,23 @@ export default function Home() {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [backendInfo, setBackendInfo] = useState<{
-    status: string;
-    checkpoint: string;
-    parameters: number;
-    device: string;
-  } | undefined>(undefined);
-
+  
   // Chat sessions state
   const [sessions, setSessions] = useState<ChatSession[]>([
     { id: "1", title: "New Playground Session", messages: [], persona: null },
   ]);
+  const [backendInfo, setBackendInfo] = useState<any>(null);
+  const [isBannerDismissed, setIsBannerDismissed] = useState(false);
+  
   const [currentSessionId, setCurrentSessionId] = useState<string>("1");
 
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (backendInfo?.status === "active") {
+      setIsBannerDismissed(false);
+    }
+  }, [backendInfo?.status]);
 
   // Auto check backend health periodically
   useEffect(() => {
@@ -212,6 +227,20 @@ export default function Home() {
         console.warn("Failed to switch adapter for session:", targetSession.persona);
       }
     }
+  };
+
+  const handleClearPersona = async () => {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === currentSessionId
+          ? { ...s, persona: null, messages: [] }
+          : s
+      )
+    );
+    try {
+      await api.deactivateAdapter();
+      handleSettingsChange({ ...settings, activeAdapter: null });
+    } catch (e) {}
   };
 
   const handleStop = () => {
@@ -623,12 +652,26 @@ export default function Home() {
               </div>
             </div>
 
+            {/* Warm-Up Banner */}
+            {backendInfo && backendInfo.status !== "active" && backendInfo.status !== "offline" && !isBannerDismissed && (
+              <div className="bg-warning/10 border-b border-warning/20 px-4 py-2 flex items-center justify-between text-xs text-warning z-10 shadow-sm shrink-0">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>Model warming up — responses come from a fallback engine until weights finish loading.</span>
+                </div>
+                <button onClick={() => setIsBannerDismissed(true)} aria-label="Dismiss banner" className="p-1 hover:bg-warning/20 rounded-md transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             {/* Chat Workspace Message Window */}
             <ChatWindow 
               messages={messages} 
               isGenerating={isGenerating} 
               persona={currentSession?.persona || null}
               onSelectPersona={handleSelectPersona}
+              onClearPersona={handleClearPersona}
               onSelectPrompt={handleSend}
             />
 

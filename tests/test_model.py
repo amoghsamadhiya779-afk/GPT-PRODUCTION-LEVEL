@@ -161,6 +161,73 @@ class TestGPTModel:
 
         assert torch.equal(out_no_cache, out_with_cache), "Cached and non-cached must yield identical tokens when using Top-P and repetition penalty"
 
+    def test_no_repeat_ngram_size(self):
+        from model.gpt import generate
+        model = GPTModel(TINY_CONFIG)
+        model.eval()
+        idx = torch.tensor([[10, 11, 12, 10, 11]], dtype=torch.long)
+        
+        # We manually patch the model's logits to forcefully loop
+        # by making token 12 the highest probability after 11.
+        original_forward = model.forward
+        
+        def mock_forward(idx_input):
+            logits = original_forward(idx_input)
+            # Make sure token 12 is chosen when last two were 10, 11
+            # But the n-gram penalty should prevent this
+            if idx_input[0, -1].item() == 11:
+                logits[0, -1, 12] += 100.0  # Force 12
+            return logits
+            
+        model.forward = mock_forward
+        
+        # Test without n-gram penalty: should generate 12
+        torch.manual_seed(42)
+        out_no_penalty = generate(
+            model, idx.clone(), max_new_tokens=1, context_size=32,
+            temperature=0.0, no_repeat_ngram_size=0, use_cache=False
+        )
+        assert out_no_penalty[0, -1].item() == 12
+
+        # Test with n-gram penalty (size=3). 
+        # The sequence is [10, 11, 12, 10, 11]. Next token 12 would create n-gram [10, 11, 12] which already exists!
+        torch.manual_seed(42)
+        out_with_penalty = generate(
+            model, idx.clone(), max_new_tokens=1, context_size=32,
+            temperature=0.0, no_repeat_ngram_size=3, use_cache=False
+        )
+        assert out_with_penalty[0, -1].item() != 12, "n-gram penalty failed to block the repeated sequence"
+        
+        # Restore forward
+        model.forward = original_forward
+
+    def test_advanced_sampling_kv_equivalence(self):
+        from model.gpt import generate
+        model = GPTModel(TINY_CONFIG)
+        model.eval()
+        idx = torch.randint(0, 100, (1, 8))
+
+        # We'll use frequency_penalty, presence_penalty, no_repeat_ngram_size, min_new_tokens
+        torch.manual_seed(42)
+        out_no_cache = generate(
+            model, idx.clone(), max_new_tokens=10, context_size=32,
+            temperature=0.8, top_k=50, top_p=0.9, 
+            frequency_penalty=0.5, presence_penalty=0.5, 
+            no_repeat_ngram_size=3, min_new_tokens=3,
+            use_cache=False
+        )
+
+        torch.manual_seed(42)
+        out_with_cache = generate(
+            model, idx.clone(), max_new_tokens=10, context_size=32,
+            temperature=0.8, top_k=50, top_p=0.9, 
+            frequency_penalty=0.5, presence_penalty=0.5, 
+            no_repeat_ngram_size=3, min_new_tokens=3,
+            use_cache=True
+        )
+
+        assert torch.equal(out_no_cache, out_with_cache), "Cached and non-cached must yield identical tokens for advanced sampling params"
+
 
 class TestLoRA:
     def test_lora_injection_and_freezing(self):

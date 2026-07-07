@@ -101,21 +101,48 @@ def _sample_next_token(
     top_k: int | None = None,
     top_p: float | None = None,
     repetition_penalty: float = 1.0,
+    frequency_penalty: float = 0.0,
+    presence_penalty: float = 0.0,
+    no_repeat_ngram_size: int = 0,
     idx: Tensor | None = None,
+    prompt_len: int = 0,
 ) -> Tensor:
     """Helper function to sample the next token from logits."""
-    # Apply repetition penalty
-    if repetition_penalty > 1.0 and idx is not None:
+    # N-gram penalty applies to the whole sequence to prevent repeating any n-gram
+    if idx is not None:
         for b in range(logits.shape[0]):
-            # Get unique tokens seen so far in this batch item
-            unique_tokens = torch.unique(idx[b])
-            token_logits = logits[b, unique_tokens]
-            penalized = torch.where(
-                token_logits >= 0,
-                token_logits / repetition_penalty,
-                token_logits * repetition_penalty,
-            )
-            logits[b, unique_tokens] = penalized
+            if no_repeat_ngram_size > 0 and idx.shape[1] >= no_repeat_ngram_size - 1:
+                n = no_repeat_ngram_size
+                seq = idx[b]
+                if n == 1:
+                    logits[b, seq] = float('-inf')
+                else:
+                    ctx = seq[-(n-1):]
+                    for i in range(len(seq) - n + 1):
+                        if torch.equal(seq[i:i+n-1], ctx):
+                            banned_token = seq[i+n-1]
+                            logits[b, banned_token] = float('-inf')
+                            
+            # Other penalties apply ONLY to generated tokens
+            if prompt_len > 0 and idx.shape[1] > prompt_len:
+                gen_tokens = idx[b, prompt_len:]
+                
+                if repetition_penalty > 1.0:
+                    unique_tokens = torch.unique(gen_tokens)
+                    token_logits = logits[b, unique_tokens]
+                    penalized = torch.where(
+                        token_logits >= 0,
+                        token_logits / repetition_penalty,
+                        token_logits * repetition_penalty,
+                    )
+                    logits[b, unique_tokens] = penalized
+                    
+                if frequency_penalty != 0.0 or presence_penalty != 0.0:
+                    unique_tokens, counts = torch.unique(gen_tokens, return_counts=True)
+                    if presence_penalty != 0.0:
+                        logits[b, unique_tokens] -= presence_penalty
+                    if frequency_penalty != 0.0:
+                        logits[b, unique_tokens] -= frequency_penalty * counts.float().to(logits.device)
 
     # Top-k filtering
     if top_k is not None:
@@ -203,21 +230,33 @@ def generate_stream(
     top_k: int | None = None,
     top_p: float | None = None,
     repetition_penalty: float = 1.0,
+    frequency_penalty: float = 0.0,
+    presence_penalty: float = 0.0,
+    no_repeat_ngram_size: int = 0,
+    min_new_tokens: int = 0,
     eos_id: int | None = None,
     use_cache: bool = False,
 ) -> Iterator[int]:
     """Yields each generated token id as an integer."""
+    prompt_len = idx.shape[1]
+    tokens_generated = 0
+    
     if use_cache:
         # Pre-fill step: process the initial context prompt to populate the cache
         idx_cond = idx[:, -context_size:]
         with torch.no_grad():
             logits, past_key_values = model(idx_cond, use_cache=True, past_key_values=None)
         logits = logits[:, -1, :]
+        if eos_id is not None and tokens_generated < min_new_tokens:
+            logits[:, eos_id] = float('-inf')
         idx_next = _sample_next_token(
-            logits, temperature, top_k, top_p, repetition_penalty, idx
+            logits, temperature, top_k, top_p, repetition_penalty, 
+            frequency_penalty, presence_penalty, no_repeat_ngram_size, 
+            idx, prompt_len
         )
         
         token_id = idx_next.item()
+        tokens_generated += 1
         yield token_id
         
         if eos_id is not None and token_id == eos_id:
@@ -238,11 +277,16 @@ def generate_stream(
             with torch.no_grad():
                 logits, past_key_values = model(idx_next, use_cache=True, past_key_values=past_key_values)
             logits = logits[:, -1, :]
+            if eos_id is not None and tokens_generated < min_new_tokens:
+                logits[:, eos_id] = float('-inf')
             idx_next = _sample_next_token(
-                logits, temperature, top_k, top_p, repetition_penalty, idx
+                logits, temperature, top_k, top_p, repetition_penalty, 
+                frequency_penalty, presence_penalty, no_repeat_ngram_size, 
+                idx, prompt_len
             )
 
             token_id = idx_next.item()
+            tokens_generated += 1
             yield token_id
 
             if eos_id is not None and token_id == eos_id:
@@ -257,12 +301,17 @@ def generate_stream(
             with torch.no_grad():
                 logits = model(idx_cond)
             logits = logits[:, -1, :]
+            if eos_id is not None and tokens_generated < min_new_tokens:
+                logits[:, eos_id] = float('-inf')
 
             idx_next = _sample_next_token(
-                logits, temperature, top_k, top_p, repetition_penalty, idx
+                logits, temperature, top_k, top_p, repetition_penalty, 
+                frequency_penalty, presence_penalty, no_repeat_ngram_size, 
+                idx, prompt_len
             )
 
             token_id = idx_next.item()
+            tokens_generated += 1
             yield token_id
 
             if eos_id is not None and token_id == eos_id:
@@ -279,28 +328,19 @@ def generate(
     top_k: int | None = None,
     top_p: float | None = None,
     repetition_penalty: float = 1.0,
+    frequency_penalty: float = 0.0,
+    presence_penalty: float = 0.0,
+    no_repeat_ngram_size: int = 0,
+    min_new_tokens: int = 0,
     eos_id: int | None = None,
     use_cache: bool = False,
 ) -> Tensor:
     """Advanced text generation with temperature scaling, top-k/top-p sampling, and optional KV-Caching.
-
-    Args:
-        model: Trained GPTModel instance.
-        idx: Starting token indices, shape (batch, seq_len).
-        max_new_tokens: Maximum number of new tokens to generate.
-        context_size: Maximum context window size.
-        temperature: Sampling temperature (0.0 = greedy, higher = more random).
-        top_k: If set, only sample from the top-k most probable tokens.
-        top_p: If set, only sample from tokens with cumulative probability below top_p.
-        repetition_penalty: Penalty factor applied to previously generated tokens.
-        eos_id: End-of-sequence token ID (generation stops if encountered).
-        use_cache: Whether to use key-value caching to speed up generation.
-
-    Returns:
-        Generated token sequence, shape (batch, seq_len + generated_tokens).
     """
     for token_id in generate_stream(
-        model, idx, max_new_tokens, context_size, temperature, top_k, top_p, repetition_penalty, eos_id, use_cache
+        model, idx, max_new_tokens, context_size, temperature, top_k, top_p, 
+        repetition_penalty, frequency_penalty, presence_penalty, no_repeat_ngram_size,
+        min_new_tokens, eos_id, use_cache
     ):
         idx_next = torch.tensor([[token_id]], dtype=torch.long, device=idx.device)
         idx = torch.cat((idx, idx_next), dim=1)

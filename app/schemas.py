@@ -1,7 +1,7 @@
 # app/schemas.py
 """Validation schemas for the FastAPI inference service."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class GenerationRequest(BaseModel):
@@ -19,7 +19,7 @@ class GenerationRequest(BaseModel):
         description="Maximum number of new tokens to generate."
     )
     temperature: float = Field(
-        default=0.8, 
+        default=0.7, 
         ge=0.0, 
         le=2.0, 
         description="Sampling temperature. 0.0 means greedy decoding."
@@ -31,16 +31,40 @@ class GenerationRequest(BaseModel):
         description="Only sample from the top-k most probable tokens."
     )
     top_p: float | None = Field(
-        default=None, 
+        default=0.9, 
         ge=0.0, 
         le=1.0, 
         description="Cumulative probability threshold for Top-P sampling."
     )
     repetition_penalty: float = Field(
-        default=1.0, 
+        default=1.3, 
         ge=1.0, 
         le=2.0, 
         description="Penalty parameter applied to previously generated tokens."
+    )
+    no_repeat_ngram_size: int = Field(
+        default=3,
+        ge=0,
+        le=8,
+        description="Prevents generating the same sequence of N tokens twice."
+    )
+    frequency_penalty: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=2.0,
+        description="Penalizes tokens based on how many times they appear."
+    )
+    presence_penalty: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=2.0,
+        description="Penalizes tokens if they have appeared at all."
+    )
+    min_new_tokens: int = Field(
+        default=8,
+        ge=0,
+        le=100,
+        description="Minimum number of new tokens to generate before stopping."
     )
     use_cache: bool = Field(
         default=True,
@@ -50,6 +74,12 @@ class GenerationRequest(BaseModel):
         default=False,
         description="Whether to fetch context from web search (RAG) to guide generation."
     )
+
+    @model_validator(mode='after')
+    def check_min_max_tokens(self):
+        if self.min_new_tokens >= self.max_new_tokens:
+            raise ValueError("min_new_tokens must be less than max_new_tokens")
+        return self
 
 
 class GenerationResponse(BaseModel):

@@ -329,6 +329,10 @@ def generate_text(request: Request, body: GenerationRequest):
             top_k=body.top_k,
             top_p=body.top_p,
             repetition_penalty=body.repetition_penalty,
+            frequency_penalty=body.frequency_penalty,
+            presence_penalty=body.presence_penalty,
+            no_repeat_ngram_size=body.no_repeat_ngram_size,
+            min_new_tokens=body.min_new_tokens,
             use_cache=body.use_cache,
         )
         
@@ -426,6 +430,10 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
                     top_k=body.top_k,
                     top_p=body.top_p,
                     repetition_penalty=body.repetition_penalty,
+                    frequency_penalty=body.frequency_penalty,
+                    presence_penalty=body.presence_penalty,
+                    no_repeat_ngram_size=body.no_repeat_ngram_size,
+                    min_new_tokens=body.min_new_tokens,
                     use_cache=body.use_cache,
                 ):
                     if stop_event.is_set():
