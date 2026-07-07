@@ -422,3 +422,4 @@ Final-year B.Tech student specializing in ML Systems, Distributed Systems, and P
 * 📧 **Email**: [amoghsamadhiya779@gmail.com](mailto:amoghsamadhiya779@gmail.com)
 * 🔗 **LinkedIn**: [amogh-samadhiya](https://www.linkedin.com/in/amogh-samadhiya-8890b82b8/)
 * 💼 **Availability**: *Open to remote Backend / ML Engineering internships and opportunities.*
+
