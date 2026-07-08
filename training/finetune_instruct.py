@@ -118,11 +118,8 @@ def evaluate_generation(model, tokenizer, device, context_size):
                 use_cache=True
             )
         
-        generated_text = tokenizer.token_ids_to_text(output_ids)
-        if "### Response:\n" in generated_text:
-            ans = generated_text.split("### Response:\n")[-1].strip()
-        else:
-            ans = generated_text.replace(template, "").strip()
+        generated_ids = output_ids[0][input_ids.shape[1]:]
+        ans = tokenizer.token_ids_to_text(generated_ids.unsqueeze(0)).strip()
             
         if "<|endoftext|>" in ans:
             ans = ans.split("<|endoftext|>")[0]
@@ -198,6 +195,15 @@ def main():
     train_ds = InstructDataset(examples, tokenizer, max_length=max_length)
     collate = lambda b: collate_fn_instruct(b, pad_id)
 
+    eval_loader = None
+    eval_path = "data/sft_eval.jsonl"
+    if os.path.exists(eval_path):
+        eval_examples = []
+        with open(eval_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip(): eval_examples.append(json.loads(line))
+        eval_ds = InstructDataset(eval_examples, tokenizer, max_length=max_length)
+        eval_loader = DataLoader(eval_ds, batch_size=physical_batch_size, shuffle=False, collate_fn=collate)
     logger.info(f"Loading base model from {checkpoint_path}")
     gpt_cfg_dict = model_config.copy()
         
@@ -326,6 +332,24 @@ def main():
                     break
         if args.max_steps is not None and global_step >= args.max_steps:
             break
+            
+        if eval_loader is not None:
+            model.eval()
+            eval_loss = 0.0
+            with torch.no_grad():
+                for eval_inputs, eval_targets in eval_loader:
+                    eval_inputs = eval_inputs.to(device)
+                    eval_targets = eval_targets.to(device)
+                    if device.type == "cuda":
+                        with torch.amp.autocast(device_type="cuda", enabled=True):
+                            batch_loss = calc_loss_batch(eval_inputs, eval_targets, model, device)
+                    else:
+                        batch_loss = calc_loss_batch(eval_inputs, eval_targets, model, device)
+                    eval_loss += batch_loss.item()
+            eval_loss /= len(eval_loader)
+            mlflow.log_metric("eval_loss", eval_loss, step=global_step)
+            logger.info(f"Epoch {epoch+1}/{epochs} | Eval Loss: {eval_loss:.4f}")
+
 
     elapsed = time.time() - start_time
     logger.info(f"Training complete in {elapsed:.1f}s")
