@@ -22,7 +22,7 @@ interface ChatSession {
   id: string;
   title: string;
   messages: Message[];
-  persona?: "Math Tutor" | "Physics Helper" | "General Assistant" | null;
+  persona?: "Socrates" | "Einstein" | "Shakespeare" | null;
 }
 
 export default function Home() {
@@ -80,6 +80,7 @@ export default function Home() {
   const [currentSessionId, setCurrentSessionId] = useState<string>("1");
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const originalAdapterRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (backendInfo?.status === "active") {
@@ -111,42 +112,43 @@ export default function Home() {
   const currentSession = sessions.find((s) => s.id === currentSessionId) || sessions[0];
   const messages = currentSession?.messages || [];
 
-  const getWelcomeMessage = (persona: "Math Tutor" | "Physics Helper" | "General Assistant") => {
+  const getWelcomeMessage = (persona: "Socrates" | "Einstein" | "Shakespeare") => {
     switch (persona) {
-      case "Math Tutor":
+      case "Socrates":
         return (
-          "Hello! I am your Math Tutor. I specialize in algebra, geometry, calculus, and mathematical equations. Let's explore mathematical concepts together!\n\n" +
+          "Greetings. I am Socrates. Let us engage in dialectic inquiry and ponder the truths of our world together.\n\n" +
           "Here are some prompts you can try to focus on what I have been trained on:\n" +
-          "- **'Explain the Pythagorean theorem'**\n" +
-          "- **'What is a derivative?'**\n" +
-          "- **'How do you solve linear equations?'**"
+          "- **'What is the meaning of a good life?'**\n" +
+          "- **'Why do people believe in things they cannot see?'**\n" +
+          "- **'What makes a society just?'**"
         );
-      case "Physics Helper":
+      case "Einstein":
         return (
-          "Hello! I am your Physics Helper. I focus on classical mechanics, kinematics, forces, and thermodynamics. Let's solve physical mathematics together!\n\n" +
+          "Hello! I am Albert Einstein. I focus on physics, natural sciences, and fundamental analysis. Let's explore the universe's mechanics!\n\n" +
           "Here are some prompts you can try to focus on what I have been trained on:\n" +
-          "- **'What is Newton's second law?'**\n" +
-          "- **'Explain gravitational potential energy'**\n" +
-          "- **'How does speed relate to velocity?'**"
+          "- **'Why is the sky blue?'**\n" +
+          "- **'What are black holes?'**\n" +
+          "- **'How do airplanes stay in the air?'**"
         );
-      case "General Assistant":
+      case "Shakespeare":
         return (
-          "Hello! I am your General Assistant. I can help you understand general math theories, numbers, and logic. Let's start learning!\n\n" +
+          "Hark! I am William Shakespeare, at thy service for poetry, drama, and creative musings. Let us weave tales together!\n\n" +
           "Here are some prompts you can try to focus on what I have been trained on:\n" +
-          "- **'Why is math important?'**\n" +
-          "- **'Explain the concept of infinity'**\n" +
-          "- **'What are prime numbers?'**"
+          "- **'Write a poem about the sea.'**\n" +
+          "- **'Describe a rainy day in London.'**\n" +
+          "- **'Tell me a dramatic story about betrayal.'**"
         );
       default:
         return "";
     }
   };
 
-  const handleSelectPersona = async (persona: "Math Tutor" | "Physics Helper" | "General Assistant") => {
+  const handleSelectPersona = async (persona: "Socrates" | "Einstein" | "Shakespeare") => {
     const welcomeMsg: Message = {
       id: "welcome-" + Date.now(),
       role: "assistant",
       content: getWelcomeMessage(persona),
+      personaBadge: persona,
     };
     
     setSessions((prev) =>
@@ -162,19 +164,29 @@ export default function Home() {
       )
     );
 
-    try {
-      let adapterName = "";
-      if (persona === "Math Tutor") adapterName = "math_adapter";
-      else if (persona === "Physics Helper") adapterName = "physics_adapter";
-      else if (persona === "General Assistant") adapterName = "general_adapter";
-      
-      if (adapterName) {
-        await api.activateAdapter(adapterName);
-        handleSettingsChange({ ...settings, activeAdapter: adapterName });
-      }
-    } catch (e) {
-      console.warn(`Adapter for ${persona} not found or failed to activate. Falling back to base model.`);
+    let newSettings = { ...settings };
+
+    // Apply generation presets
+    if (persona === "Einstein") {
+      newSettings = { ...newSettings, temperature: 0.5, webSearch: true };
+    } else if (persona === "Socrates") {
+      newSettings = { ...newSettings, temperature: 0.7, maxTokens: 150, webSearch: false };
+    } else if (persona === "Shakespeare") {
+      newSettings = { ...newSettings, temperature: 0.9, repetitionPenalty: 1.1, webSearch: false };
     }
+
+    try {
+      if (!currentSession?.persona) {
+        originalAdapterRef.current = settings.activeAdapter || null;
+      }
+      const adapterName = `persona_${persona.toLowerCase()}`;
+      newSettings.activeAdapter = adapterName;
+      await api.activateAdapter(adapterName);
+    } catch (e) {
+      console.warn(`Adapter for ${persona} not found or failed to activate.`);
+    }
+
+    handleSettingsChange(newSettings);
   };
 
   const handleNewChat = async () => {
@@ -205,18 +217,17 @@ export default function Home() {
     if (targetSession) {
       try {
         if (!targetSession.persona) {
-          await api.deactivateAdapter();
-          handleSettingsChange({ ...settings, activeAdapter: null });
-        } else {
-          let adapterName = "";
-          if (targetSession.persona === "Math Tutor") adapterName = "math_adapter";
-          else if (targetSession.persona === "Physics Helper") adapterName = "physics_adapter";
-          else if (targetSession.persona === "General Assistant") adapterName = "general_adapter";
-          
-          if (adapterName) {
-            await api.activateAdapter(adapterName);
-            handleSettingsChange({ ...settings, activeAdapter: adapterName });
+          if (originalAdapterRef.current) {
+            await api.activateAdapter(originalAdapterRef.current);
+            handleSettingsChange({ ...settings, activeAdapter: originalAdapterRef.current });
+          } else {
+            await api.deactivateAdapter();
+            handleSettingsChange({ ...settings, activeAdapter: null });
           }
+        } else {
+          const adapterName = `persona_${targetSession.persona.toLowerCase()}`;
+          await api.activateAdapter(adapterName);
+          handleSettingsChange({ ...settings, activeAdapter: adapterName });
         }
       } catch (e) {
         console.warn("Failed to switch adapter for session:", targetSession.persona);
@@ -233,8 +244,13 @@ export default function Home() {
       )
     );
     try {
-      await api.deactivateAdapter();
-      handleSettingsChange({ ...settings, activeAdapter: null });
+      if (originalAdapterRef.current) {
+        await api.activateAdapter(originalAdapterRef.current);
+        handleSettingsChange({ ...settings, activeAdapter: originalAdapterRef.current });
+      } else {
+        await api.deactivateAdapter();
+        handleSettingsChange({ ...settings, activeAdapter: null });
+      }
     } catch (e) {}
   };
 
@@ -283,14 +299,20 @@ export default function Home() {
       role: "assistant",
       content: "",
       isStreaming: true,
+      personaBadge: currentSession?.persona && !settings.webSearch ? currentSession.persona : undefined,
     };
 
     updateSessionMessages(currentSessionId, [...newMessages, assistantMessage]);
 
     try {
       if (backendInfo && backendInfo.status !== "offline") {
+        // Tag prompt only if persona is active AND web search is off
+        const finalPrompt = currentSession?.persona && !settings.webSearch 
+          ? `[persona: ${currentSession.persona}] ${promptText}`
+          : promptText;
+
         const payload = {
-          prompt: promptText,
+          prompt: finalPrompt,
           max_new_tokens: settings.maxTokens,
           temperature: settings.temperature,
           top_k: settings.topK,
@@ -703,6 +725,7 @@ export default function Home() {
         settings={settings}
         onChange={handleSettingsChange}
         backendInfo={backendInfo}
+        activePersona={currentSession?.persona || null}
       />
     </div>
   );

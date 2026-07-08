@@ -3,7 +3,7 @@
 import React from "react";
 import { useTheme } from "./ThemeProvider";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Sun, Moon, Cpu, Zap, Activity } from "lucide-react";
+import { X, Sun, Moon, Cpu, Zap, Activity, Sparkles } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 
@@ -27,6 +27,7 @@ interface SettingsPanelProps {
   settings: ModelSettings;
   onChange: (settings: ModelSettings) => void;
   backendInfo?: HealthStatus | null;
+  activePersona?: string | null;
 }
 
 export default function SettingsPanel({
@@ -35,6 +36,7 @@ export default function SettingsPanel({
   settings,
   onChange,
   backendInfo,
+  activePersona,
 }: SettingsPanelProps) {
   const { theme, setTheme } = useTheme();
   const [adapters, setAdapters] = React.useState<string[]>([]);
@@ -155,9 +157,17 @@ export default function SettingsPanel({
 
               {/* Hyperparameters */}
               <div className="space-y-6 py-6 border-b border-border">
-                <label className="text-xs font-semibold text-muted uppercase tracking-wider block">
-                  Parameters
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-muted uppercase tracking-wider block">
+                    Parameters
+                  </label>
+                  {activePersona && (
+                    <span className="text-[9px] bg-accent/10 text-accent px-1.5 py-0.5 rounded-full uppercase tracking-wider font-semibold border border-accent/20 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" />
+                      {activePersona} Preset
+                    </span>
+                  )}
+                </div>
 
                 {/* Temperature */}
                 <div className="space-y-2">

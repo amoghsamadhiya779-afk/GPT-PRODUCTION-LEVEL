@@ -82,13 +82,14 @@ export interface Message {
   tokensGenerated?: number;
   useCache?: boolean;
   sources?: { title: string; snippet: string; link: string }[] | null;
+  personaBadge?: string;
 }
 
 interface ChatWindowProps {
   messages: Message[];
   isGenerating: boolean;
-  persona?: "Math Tutor" | "Physics Helper" | "General Assistant" | null;
-  onSelectPersona?: (persona: "Math Tutor" | "Physics Helper" | "General Assistant") => void;
+  persona?: "Socrates" | "Einstein" | "Shakespeare" | null;
+  onSelectPersona?: (persona: "Socrates" | "Einstein" | "Shakespeare") => void;
   onClearPersona?: () => void;
   onSelectPrompt?: (promptText: string) => void;
 }
@@ -151,60 +152,60 @@ export default function ChatWindow({
               transition={{ delay: 0.3, duration: 0.4 }}
               className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-10 w-full max-w-3xl"
             >
-              {/* Math Tutor Card */}
+              {/* Socrates Card */}
               <button
-                onClick={() => onSelectPersona?.("Math Tutor")}
+                onClick={() => onSelectPersona?.("Socrates")}
                 className="p-5 rounded-2xl border border-border bg-surface/30 hover:border-accent/40 hover:bg-elevated/10 text-left transition-all duration-300 hover:scale-102 flex flex-col justify-between cursor-pointer h-[200px]"
               >
                 <div>
                   <div className="w-10 h-10 rounded-xl bg-sky-500/10 flex items-center justify-center mb-4 text-sky-400">
                     <GraduationCap className="w-5 h-5" />
                   </div>
-                  <h3 className="text-sm font-semibold text-primary">Math Tutor</h3>
+                  <h3 className="text-sm font-semibold text-primary">Socrates</h3>
                   <p className="text-xs text-secondary mt-1.5 leading-relaxed pr-2">
-                    Algebra, Calculus, and Geometry equations. Formula derivation and problem-solving steps.
+                    Philosophy, logic, and deep questioning. A concise, thoughtful, and methodical approach.
                   </p>
                 </div>
                 <div className="text-[10px] font-mono text-muted uppercase tracking-wider mt-4">
-                  Geometry • Calculus • Algebra
+                  Logic • Philosophy • Truth
                 </div>
               </button>
 
-              {/* Physics Helper Card */}
+              {/* Einstein Card */}
               <button
-                onClick={() => onSelectPersona?.("Physics Helper")}
+                onClick={() => onSelectPersona?.("Einstein")}
                 className="p-5 rounded-2xl border border-border bg-surface/30 hover:border-accent/40 hover:bg-elevated/10 text-left transition-all duration-300 hover:scale-102 flex flex-col justify-between cursor-pointer h-[200px]"
               >
                 <div>
                   <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center mb-4 text-purple-400">
                     <Atom className="w-5 h-5" />
                   </div>
-                  <h3 className="text-sm font-semibold text-primary">Physics Helper</h3>
+                  <h3 className="text-sm font-semibold text-primary">Einstein</h3>
                   <p className="text-xs text-secondary mt-1.5 leading-relaxed pr-2">
-                    Classical mechanics, kinematics, force calculations, and thermodynamics.
+                    Physics, mathematics, and factual analysis. Fact-checked and grounded in science.
                   </p>
                 </div>
                 <div className="text-[10px] font-mono text-muted uppercase tracking-wider mt-4">
-                  Mechanics • Energy • Forces
+                  Physics • Science • Factual
                 </div>
               </button>
 
-              {/* General Assistant Card */}
+              {/* Shakespeare Card */}
               <button
-                onClick={() => onSelectPersona?.("General Assistant")}
+                onClick={() => onSelectPersona?.("Shakespeare")}
                 className="p-5 rounded-2xl border border-border bg-surface/30 hover:border-accent/40 hover:bg-elevated/10 text-left transition-all duration-300 hover:scale-102 flex flex-col justify-between cursor-pointer h-[200px]"
               >
                 <div>
                   <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center mb-4 text-amber-400">
                     <Compass className="w-5 h-5" />
                   </div>
-                  <h3 className="text-sm font-semibold text-primary">General Assistant</h3>
+                  <h3 className="text-sm font-semibold text-primary">Shakespeare</h3>
                   <p className="text-xs text-secondary mt-1.5 leading-relaxed pr-2">
-                    Importance of mathematics, history, prime numbers, infinity, and theory.
+                    Creative writing, poetry, and dramatic flair. Highly expressive and theatrical.
                   </p>
                 </div>
                 <div className="text-[10px] font-mono text-muted uppercase tracking-wider mt-4">
-                  History • Infinity • Theory
+                  Poetry • Creative • Drama
                 </div>
               </button>
             </motion.div>
@@ -243,6 +244,12 @@ export default function ChatWindow({
 
                   {/* Bubble content */}
                   <div className={`flex flex-col gap-1.5 max-w-[85%] md:max-w-[75%]`}>
+                    {!isUser && message.personaBadge && (
+                      <div className="text-[10px] text-accent font-semibold tracking-wider uppercase ml-1 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" />
+                        {message.personaBadge}
+                      </div>
+                    )}
                     <div
                       className={`px-4.5 py-3 rounded-2xl text-sm md:text-base leading-relaxed break-words shadow-sm ${
                         isUser
@@ -354,69 +361,69 @@ export default function ChatWindow({
                   Recommended Next Steps
                 </div>
                 <div className="flex flex-wrap gap-2 mt-1">
-                  {persona === "Math Tutor" && (
+                  {persona === "Socrates" && (
                     <>
                       <button
-                        onClick={() => onSelectPrompt?.("Explain the Pythagorean theorem")}
+                        onClick={() => onSelectPrompt?.("What is the meaning of a good life?")}
                         className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
                       >
-                        Explain the Pythagorean theorem
+                        What is the meaning of a good life?
                       </button>
                       <button
-                        onClick={() => onSelectPrompt?.("What is a derivative?")}
+                        onClick={() => onSelectPrompt?.("Why do people believe in things they cannot see?")}
                         className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
                       >
-                        What is a derivative?
+                        Why do people believe in things they cannot see?
                       </button>
                       <button
-                        onClick={() => onSelectPrompt?.("How do you solve linear equations?")}
+                        onClick={() => onSelectPrompt?.("What makes a society just?")}
                         className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
                       >
-                        How do you solve linear equations?
+                        What makes a society just?
                       </button>
                     </>
                   )}
-                  {persona === "Physics Helper" && (
+                  {persona === "Einstein" && (
                     <>
                       <button
-                        onClick={() => onSelectPrompt?.("What is Newton's second law?")}
+                        onClick={() => onSelectPrompt?.("Why is the sky blue?")}
                         className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
                       >
-                        What is Newton's second law?
+                        Why is the sky blue?
                       </button>
                       <button
-                        onClick={() => onSelectPrompt?.("Explain gravitational potential energy")}
+                        onClick={() => onSelectPrompt?.("What are black holes?")}
                         className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
                       >
-                        Explain gravitational potential energy
+                        What are black holes?
                       </button>
                       <button
-                        onClick={() => onSelectPrompt?.("How does speed relate to velocity?")}
+                        onClick={() => onSelectPrompt?.("How do airplanes stay in the air?")}
                         className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
                       >
-                        How does speed relate to velocity?
+                        How do airplanes stay in the air?
                       </button>
                     </>
                   )}
-                  {persona === "General Assistant" && (
+                  {persona === "Shakespeare" && (
                     <>
                       <button
-                        onClick={() => onSelectPrompt?.("Why is math important?")}
+                        onClick={() => onSelectPrompt?.("Write a poem about the sea.")}
                         className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
                       >
-                        Why is math important?
+                        Write a poem about the sea.
                       </button>
                       <button
-                        onClick={() => onSelectPrompt?.("Explain the concept of infinity")}
+                        onClick={() => onSelectPrompt?.("Describe a rainy day in London.")}
                         className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
                       >
-                        Explain the concept of infinity
+                        Describe a rainy day in London.
                       </button>
                       <button
-                        onClick={() => onSelectPrompt?.("What are prime numbers?")}
+                        onClick={() => onSelectPrompt?.("Tell me a dramatic story about betrayal.")}
                         className="px-3 py-1.5 text-xs rounded-xl border border-border bg-surface hover:border-accent hover:bg-surface/80 transition-all text-secondary hover:text-primary hover:-translate-y-0.5 shadow-sm cursor-pointer"
                       >
-                        What are prime numbers?
+                        Tell me a dramatic story about betrayal.
                       </button>
                     </>
                   )}
