@@ -29,7 +29,8 @@ COPY model/ /app/model/
 COPY training/ /app/training/
 COPY configs/ /app/configs/
 COPY data/ /app/data/
-RUN mkdir -p /app/checkpoints/adapters /app/data
+COPY checkpoints/adapters/ /app/checkpoints/adapters/
+RUN mkdir -p /app/data
 
 # Expose server ports
 EXPOSE 7860

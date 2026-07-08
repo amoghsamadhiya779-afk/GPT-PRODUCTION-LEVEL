@@ -1,7 +1,8 @@
 venv/
 frontend/node_modules/
 .git/
-checkpoints/
+checkpoints/*
+!checkpoints/adapters/
 checkpoints_tiny/
 logs/
 logs_tiny/
