@@ -23,6 +23,10 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
+# Pre-cache tiktoken vocabulary to prevent runtime download hangs
+ENV TIKTOKEN_CACHE_DIR=/app/data/tiktoken_cache
+RUN mkdir -p /app/data/tiktoken_cache && python -c "import tiktoken; tiktoken.get_encoding('gpt2')"
+
 # Copy source code files
 COPY app/ /app/app/
 COPY model/ /app/model/
