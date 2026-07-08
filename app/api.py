@@ -271,6 +271,41 @@ def health_check():
     )
 
 
+STOP_WORDS = {"a", "an", "the", "and", "but", "if", "or", "because", "as", "what", "which", "this", "that", "these", "those", "then", "just", "so", "than", "such", "both", "through", "about", "for", "is", "of", "while", "during", "to", "in", "it", "on", "with"}
+
+def check_grounding_safety(prompt: str, answer: str, sources: list) -> str:
+    import re
+    if not sources:
+        return ""
+        
+    def get_words(text):
+        words = re.findall(r'\b[a-z]+\b', text.lower())
+        return set(w for w in words if w not in STOP_WORDS)
+        
+    gen_words = get_words(answer)
+    source_words = set()
+    for s in sources:
+        source_words.update(get_words(s['snippet']))
+        
+    overlap = len(gen_words.intersection(source_words))
+    if overlap < 2:
+        best_sentence = ""
+        max_overlap = -1
+        prompt_words = get_words(prompt)
+        
+        for s in sources:
+            sentences = re.split(r'(?<=[.!?]) +', s['snippet'])
+            for sent in sentences:
+                sent_words = get_words(sent)
+                o = len(prompt_words.intersection(sent_words))
+                if o > max_overlap:
+                    max_overlap = o
+                    best_sentence = sent.strip()
+                    
+        if best_sentence:
+            return f"From the sources: {best_sentence}.\n\n"
+    return ""
+
 def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources: list, context_size: int) -> tuple[str, list]:
     enc = tiktoken.get_encoding("gpt2")
     base_prompt = (
@@ -283,12 +318,12 @@ def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources:
     if not sources:
         return base_prompt, sources
 
-    template_start = (
+    template_header = (
         "Below is an instruction that describes a task. "
         "Write a response that appropriately completes the request.\n\n"
-        f"### Instruction:\n{original_prompt}\n\nWeb Search Context:\n"
+        "### Instruction:\n"
     )
-    template_end = "\n\n### Response:\n"
+    template_footer = f"\nQuestion: {original_prompt}\n\n### Response:\n"
     
     valid_sources = sources.copy()
     
@@ -296,8 +331,11 @@ def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources:
         if not valid_sources:
             return base_prompt, []
             
-        context_str = "\n".join([f"- {res['snippet']}" for res in valid_sources])
-        prompt_text = template_start + context_str + template_end
+        context_str = ""
+        for i, res in enumerate(valid_sources, 1):
+            context_str += f"[{i}] {res['snippet']}\n"
+            
+        prompt_text = template_header + context_str + template_footer
         
         prompt_tokens = len(enc.encode(prompt_text))
         if prompt_tokens + max_new_tokens <= context_size:
@@ -380,9 +418,16 @@ def generate_text(request: Request, body: GenerationRequest):
             # Fallback if tag is missing but starts with prompt_text
             if gen_text.startswith(prompt_text):
                 clean_ans = gen_text[len(prompt_text):].strip().replace("<|endoftext|>", "")
+                answer = clean_ans
                 response_data["generated_text"] = original_prompt + "\n\n" + clean_ans
             else:
-                response_data["generated_text"] = gen_text.replace("<|endoftext|>", "").strip()
+                answer = gen_text.replace("<|endoftext|>", "").strip()
+                response_data["generated_text"] = answer
+                
+        if body.web_search and sources:
+            safety_prefix = check_grounding_safety(original_prompt, answer, sources)
+            if safety_prefix:
+                response_data["generated_text"] = original_prompt + "\n\n" + safety_prefix + answer
                 
         response_data["prompt"] = original_prompt
         response_data["sources"] = sources
@@ -490,6 +535,7 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
         thread = threading.Thread(target=run_generation)
         thread.start()
         
+        accumulated_answer = ""
         try:
             app.state.total_requests += 1
             while True:
@@ -508,6 +554,7 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
                     
                 if item_type == "chunk":
                     if text_chunk:
+                        accumulated_answer += text_chunk
                         yield f"data: {json.dumps({'token': text_chunk, 'index': tokens_gen})}\n\n"
                 elif item_type == "done":
                     speed = tokens_gen / latency if latency > 0 else 0.0
@@ -527,6 +574,10 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
                     }
                     if sources is not None:
                         final_data["sources"] = sources
+                        if body.web_search:
+                            safety_prefix = check_grounding_safety(original_prompt, accumulated_answer.strip(), sources)
+                            if safety_prefix:
+                                final_data["safety_net_prefix"] = safety_prefix
                         
                     yield f"data: {json.dumps(final_data)}\n\n"
                     break

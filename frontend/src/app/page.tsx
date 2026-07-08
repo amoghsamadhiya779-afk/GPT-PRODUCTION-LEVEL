@@ -320,6 +320,10 @@ export default function Home() {
             );
           },
           (metrics) => {
+            const finalContent = metrics.safety_net_prefix 
+              ? metrics.safety_net_prefix + currentContent
+              : currentContent;
+              
             setSessions((prev) =>
               prev.map((s) =>
                 s.id === currentSessionId
@@ -329,7 +333,7 @@ export default function Home() {
                         m.id === assistantMsgId
                           ? {
                               ...m,
-                              content: currentContent,
+                              content: finalContent,
                               isStreaming: false,
                               latency: metrics.time_taken_seconds,
                               tokensPerSecond: metrics.tokens_per_second,

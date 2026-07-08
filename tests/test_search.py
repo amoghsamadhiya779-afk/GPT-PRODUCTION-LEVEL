@@ -19,7 +19,7 @@ def test_web_search_mock():
     mock_html = """
     <div class="result">
         <a class="result__url" href="https://example.com/transformer">Transformer Architecture</a>
-        <a class="result__snippet">The Transformer model uses self-attention to process sequences.</a>
+        <a class="result__snippet">The Transformer model uses self-attention to process sequences...</a>
     </div>
     """
     
@@ -32,16 +32,32 @@ def test_web_search_mock():
         
         assert len(results) == 1
         assert results[0]["title"] == "Transformer Architecture"
-        assert results[0]["snippet"] == "The Transformer model uses self-attention to process sequences."
+        # Verify ellipsis was stripped
+        assert results[0]["snippet"] == "The Transformer model uses self-attention to process sequences"
         assert results[0]["link"] == "https://example.com/transformer"
 
+def test_clean_and_rank_results():
+    from app.search import clean_and_rank_results
+    
+    query = "deep learning"
+    results = [
+        {"title": "Title 1", "snippet": "Deep learning is a subset of machine learning...", "link": "http://link1.com"},
+        {"title": "Title 2", "snippet": "Deep learning is a subset of machine learning", "link": "http://link2.com"},
+        {"title": "Title 3", "snippet": "Unrelated topic", "link": "http://link3.com"}
+    ]
+    
+    final = clean_and_rank_results(query, results, max_results=3)
+    # Dedupe should remove the near identical Title 2
+    assert len(final) == 2
+    assert final[0]["title"] == "Title 1" or final[0]["title"] == "Title 2"
+    # Unrelated topic should be last
+    assert final[-1]["title"] == "Title 3"
+    assert "..." not in final[0]["snippet"]
 
 def test_web_search_live():
     # Attempt a live search run to check parser compatibility with active DuckDuckGo HTML
     results = web_search("pytorch deep learning", max_results=2)
     
-    # Since live network calls could occasionally time out or be rate-limited,
-    # we don't assert length strictly, but if it succeeded, it must have correct keys
     if len(results) > 0:
         for res in results:
             assert "title" in res

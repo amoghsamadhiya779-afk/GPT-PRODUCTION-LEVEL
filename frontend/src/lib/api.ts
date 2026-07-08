@@ -16,6 +16,7 @@ export interface StreamMetrics {
   tokens_per_second: number;
   tokens_generated: number;
   sources?: { title: string; snippet: string; link: string }[];
+  safety_net_prefix?: string;
 }
 
 export interface HealthStatus {
@@ -114,6 +115,7 @@ export const api = {
                   tokens_per_second: parsed.tokens_per_second,
                   tokens_generated: parsed.tokens_generated,
                   sources: parsed.sources,
+                  safety_net_prefix: parsed.safety_net_prefix,
                 });
               }
             } catch (e) {

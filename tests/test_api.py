@@ -88,17 +88,18 @@ def test_web_search_budget(client, monkeypatch):
     assert total_snippet_tokens < 120 
     
     # Assert actual invariant on the final reconstructed prompt
-    template_start = (
+    template_header = (
         "Below is an instruction that describes a task. "
         "Write a response that appropriately completes the request.\n\n"
-        f"### Instruction:\nTest query\n\nWeb Search Context:\n"
+        "### Instruction:\n"
     )
-    template_end = "\n\n### Response:\n"
-    context_str = "\n".join([f"- {s}" for s in snippet_texts])
-    final_prompt = template_start + context_str + template_end
+    template_footer = "\nQuestion: Test query\n\n### Response:\n"
+    context_str = ""
+    for i, s in enumerate(snippet_texts, 1):
+        context_str += f"[{i}] {s}\n"
+    final_prompt = template_header + context_str + template_footer
     
-    assert len(enc.encode(final_prompt)) + 100 <= 256
-    
+    assert len(enc.encode(final_prompt)) + 100 <= 256    
     # Generate stream
     resp_stream = client.post("/generate/stream", json=payload)
     assert resp_stream.status_code == 200
@@ -292,3 +293,60 @@ def test_feedback_persistence(client):
             break
     assert found
 
+def test_safety_net_trigger(client, monkeypatch):
+    # Mock web_search to return a valid source
+    def mock_web_search(query, max_results=3):
+        return [{"title": "Mars Info", "snippet": "Mars is the fourth planet from the Sun. It is a dusty, cold, desert world.", "link": "http://mars.com"}]
+    monkeypatch.setattr("app.search.web_search", mock_web_search)
+    
+    # Mock the engine to return a hallucinated answer that has 0 overlap with the source
+    # We mock generate directly on the dummy engine
+    original_generate = app.state.engine.generate
+    
+    def mock_generate(*args, **kwargs):
+        return {
+            "prompt": kwargs.get("prompt", ""),
+            "generated_text": "I love eating chocolate cake and ice cream.",
+            "tokens_generated": 10,
+            "time_taken_seconds": 0.1,
+            "tokens_per_second": 100.0
+        }
+    
+    app.state.engine.generate = mock_generate
+    try:
+        resp = client.post("/generate", json={"prompt": "Tell me about Mars", "max_new_tokens": 10, "web_search": True})
+        assert resp.status_code == 200
+        text = resp.json()["generated_text"]
+        # Safety net should trigger because "chocolate cake" doesn't overlap with "Mars fourth planet..."
+        assert "From the sources:" in text
+        assert "Mars is the fourth planet from the Sun." in text
+        assert "chocolate cake" in text
+    finally:
+        app.state.engine.generate = original_generate
+
+def test_safety_net_silent(client, monkeypatch):
+    def mock_web_search(query, max_results=3):
+        return [{"title": "Mars Info", "snippet": "Mars is the fourth planet from the Sun. It is a dusty, cold, desert world.", "link": "http://mars.com"}]
+    monkeypatch.setattr("app.search.web_search", mock_web_search)
+    
+    original_generate = app.state.engine.generate
+    
+    def mock_generate(*args, **kwargs):
+        return {
+            "prompt": kwargs.get("prompt", ""),
+            "generated_text": "Mars is the fourth planet. It is a desert world.",
+            "tokens_generated": 10,
+            "time_taken_seconds": 0.1,
+            "tokens_per_second": 100.0
+        }
+    
+    app.state.engine.generate = mock_generate
+    try:
+        resp = client.post("/generate", json={"prompt": "Tell me about Mars", "max_new_tokens": 10, "web_search": True})
+        assert resp.status_code == 200
+        text = resp.json()["generated_text"]
+        # Safety net should NOT trigger because of high overlap
+        assert "From the sources:" not in text
+        assert "desert world" in text
+    finally:
+        app.state.engine.generate = original_generate
