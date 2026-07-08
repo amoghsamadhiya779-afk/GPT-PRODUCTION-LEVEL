@@ -195,6 +195,12 @@ def main():
     train_ds = InstructDataset(examples, tokenizer, max_length=max_length)
     collate = lambda b: collate_fn_instruct(b, pad_id)
 
+    if args.model_size == "medium":
+        physical_batch_size = 1
+    else:
+        physical_batch_size = 4
+    accum_steps = max(1, 32 // physical_batch_size)
+
     eval_loader = None
     eval_path = "data/sft_eval.jsonl"
     if os.path.exists(eval_path):
@@ -235,12 +241,6 @@ def main():
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Trainable parameters: {trainable_params:,}")
-
-    if args.model_size == "medium":
-        physical_batch_size = 1
-    else:
-        physical_batch_size = 4
-    accum_steps = max(1, 32 // physical_batch_size)
     
     train_loader = DataLoader(
         train_ds, 
@@ -250,7 +250,7 @@ def main():
     )
 
     epochs = args.epochs
-    lr = 1e-4
+    lr = 3e-5 if args.model_size == "small" else 1e-4
     total_steps = (len(train_loader) // accum_steps) * epochs
 
     optimizer = torch.optim.AdamW(
