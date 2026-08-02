@@ -9,9 +9,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Cpu,
+  GraduationCap,
   LineChart,
   History,
   Info,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Logo from "@/components/Logo";
@@ -35,6 +37,7 @@ export default function Sidebar({
   history,
   currentChatId,
   onSelectChat,
+  onDeleteChat,
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -49,7 +52,7 @@ export default function Sidebar({
     { id: "chat", name: "Playground Chat", icon: MessageSquare },
     { id: "analytics", name: "Training Telemetry", icon: LineChart },
     { id: "architecture", name: "Model Architecture", icon: Cpu },
-    { id: "teach", name: "Teach Mode", icon: Cpu }, // Using Cpu here since GraduationCap isn't imported from lucide-react in this file
+    { id: "teach", name: "Teach Mode", icon: GraduationCap },
   ] as const;
 
   return (
@@ -79,6 +82,8 @@ export default function Sidebar({
         )}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
+          aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-pressed={isCollapsed}
           className={`absolute top-5 right-[-12px] w-6 h-6 bg-surface border border-border rounded-full flex items-center justify-center text-muted hover:text-primary hover:border-accent shadow-sm transition-colors z-40 ${
             isCollapsed ? "right-2" : ""
           }`}
@@ -164,21 +169,38 @@ export default function Sidebar({
             {history.map((chat) => {
               const isSelected = currentChatId === chat.id && currentNav === "chat";
               return (
-                <button
+                <div
                   key={chat.id}
-                  onClick={() => {
-                    onSelectNav("chat");
-                    onSelectChat(chat.id);
-                  }}
-                  className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all group ${
+                  className={`group flex items-center rounded-lg text-sm transition-all ${
                     isSelected
                       ? "bg-elevated/40 text-primary border border-border/80 font-medium"
                       : "text-secondary hover:bg-elevated/20 hover:text-primary border border-transparent"
                   }`}
                 >
-                  <MessageSquare className={`w-4 h-4 flex-shrink-0 ${isSelected ? "text-accent" : "text-muted"}`} />
-                  <span className="truncate flex-1 pr-1">{chat.title}</span>
-                </button>
+                  <button
+                    onClick={() => {
+                      onSelectNav("chat");
+                      onSelectChat(chat.id);
+                    }}
+                    className="flex-1 min-w-0 text-left flex items-center gap-2.5 px-3 py-2"
+                  >
+                    <MessageSquare className={`w-4 h-4 flex-shrink-0 ${isSelected ? "text-accent" : "text-muted"}`} />
+                    <span className="truncate flex-1 pr-1">{chat.title}</span>
+                  </button>
+                  {onDeleteChat && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteChat(chat.id);
+                      }}
+                      aria-label={`Delete chat: ${chat.title}`}
+                      title="Delete chat"
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1.5 mr-1.5 rounded-md text-muted hover:text-red-500 hover:bg-red-500/10 transition-all flex-shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               );
             })}
             {history.length === 0 && (

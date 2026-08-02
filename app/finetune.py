@@ -11,7 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from app.schemas import FinetuneRequest
 from model.gpt import GPTModel
-from model.lora import inject_lora, mark_only_lora_as_trainable, get_lora_state_dict
+from model.lora import inject_lora, mark_only_lora_as_trainable, get_lora_state_dict, strip_lora_wrapper_keys
 from model.tokenizer import GPT2Tokenizer
 
 logger = logging.getLogger(__name__)
@@ -71,11 +71,19 @@ def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lo
     """Background thread to fine-tune the model using LoRA."""
     try:
         logger.info(f"Starting LoRA fine-tuning job for adapter: {req.adapter_name}")
-        
-        device = torch.device("cpu")
-        
+
+        device = base_engine.device
+
         model = GPTModel(base_engine.model_config)
-        model.load_state_dict(base_engine.model.state_dict(), strict=False)
+        # base_engine.model may currently have LoRA layers injected (e.g. an
+        # active persona/adapter), whose weights are saved under wrapped key
+        # names (`...W_query.linear.weight`). strip_lora_wrapper_keys maps
+        # those back to plain names so the base weights actually load instead
+        # of silently staying at random init under strict=False.
+        base_state = strip_lora_wrapper_keys(base_engine.model.state_dict())
+        missing, unexpected = model.load_state_dict(base_state, strict=False)
+        if missing:
+            logger.warning(f"Fine-tune base model load left params unmatched (random init): {missing}")
         model.to(device)
         
         inject_lora(model, r=4, alpha=8.0, target_modules=["W_query", "W_value"])

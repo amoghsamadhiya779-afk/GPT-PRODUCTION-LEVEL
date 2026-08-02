@@ -37,9 +37,9 @@ class GenerationRequest(BaseModel):
         description="Cumulative probability threshold for Top-P sampling."
     )
     repetition_penalty: float = Field(
-        default=1.3, 
-        ge=1.0, 
-        le=2.0, 
+        default=1.15,
+        ge=1.0,
+        le=2.0,
         description="Penalty parameter applied to previously generated tokens."
     )
     no_repeat_ngram_size: int = Field(
@@ -49,13 +49,13 @@ class GenerationRequest(BaseModel):
         description="Prevents generating the same sequence of N tokens twice."
     )
     frequency_penalty: float = Field(
-        default=0.3,
+        default=0.1,
         ge=0.0,
         le=2.0,
         description="Penalizes tokens based on how many times they appear."
     )
     presence_penalty: float = Field(
-        default=0.2,
+        default=0.1,
         ge=0.0,
         le=2.0,
         description="Penalizes tokens if they have appeared at all."

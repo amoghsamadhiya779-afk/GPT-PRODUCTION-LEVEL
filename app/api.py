@@ -7,6 +7,7 @@ training loss plot visualization. Supports lifespan checkpoint preloading.
 
 import logging
 import os
+import re
 import sys
 import time
 import json
@@ -49,6 +50,49 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8")
     except AttributeError:
         pass
+
+
+def _activate_default_adapter(engine) -> None:
+    """Activate the DEFAULT_ADAPTER env var (if set) against a freshly loaded engine.
+
+    Shared by both the immediate-load and background-load startup paths so the
+    hook isn't silently skipped depending on which one wins the race.
+    """
+    default_adapter = os.environ.get("DEFAULT_ADAPTER")
+    if not default_adapter:
+        return
+
+    adapter_path = os.path.join("checkpoints", "adapters", f"{default_adapter}.pt")
+    if not os.path.exists(adapter_path):
+        logger.warning(f"DEFAULT_ADAPTER {default_adapter} specified but file {adapter_path} not found.")
+        return
+
+    logger.info(f"Attempting to activate DEFAULT_ADAPTER: {default_adapter}")
+    try:
+        adapter_ckpt = torch.load(adapter_path, map_location="cpu", weights_only=True)
+        adapter_cfg = adapter_ckpt.get("model_config", {})
+        engine_cfg = engine.model_config
+
+        if adapter_cfg.get("model_size") != engine_cfg.get("model_size") or \
+           adapter_cfg.get("n_layers") != engine_cfg.get("n_layers") or \
+           adapter_cfg.get("emb_dim") != engine_cfg.get("emb_dim"):
+            logger.warning(
+                f"DEFAULT_ADAPTER mismatch! Adapter config: {adapter_cfg.get('model_size')}, "
+                f"Engine config: {engine_cfg.get('model_size')}. Skipping activation."
+            )
+            return
+
+        from model.lora import inject_lora, remove_lora
+        lora_r = adapter_ckpt.get("lora_r", 16)
+        lora_alpha = adapter_ckpt.get("lora_alpha", 32.0)
+        remove_lora(engine.model)
+        inject_lora(engine.model, r=lora_r, alpha=lora_alpha, target_modules=["W_query", "W_value"])
+        engine.model.load_state_dict(adapter_ckpt["model_state_dict"], strict=False)
+        logger.info(f"Successfully auto-activated DEFAULT_ADAPTER: {default_adapter}")
+    except Exception as e:
+        logger.warning(f"Failed to auto-activate DEFAULT_ADAPTER: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Context manager for FastAPI application startup and shutdown lifecycle events."""
@@ -90,6 +134,7 @@ async def lifespan(app: FastAPI):
             if os.path.exists(small_path):
                 logger.info("Loading background-downloaded model checkpoint from: %s", small_path)
                 engine = GPTInferenceEngine(small_path)
+                _activate_default_adapter(engine)
                 application.state.engine = engine
                 application.state.status = "active"
                 application.state.checkpoint_path = small_path
@@ -113,34 +158,7 @@ async def lifespan(app: FastAPI):
             app.state.parameter_count = engine.parameter_count
             app.state.device = str(engine.device)
             logger.info("Model loaded successfully (%d parameters)", engine.parameter_count)
-            
-            # --- DEFAULT_ADAPTER HOOK ---
-            default_adapter = os.environ.get("DEFAULT_ADAPTER")
-            if default_adapter:
-                adapter_path = os.path.join("checkpoints", "adapters", f"{default_adapter}.pt")
-                if os.path.exists(adapter_path):
-                    logger.info(f"Attempting to activate DEFAULT_ADAPTER: {default_adapter}")
-                    try:
-                        adapter_ckpt = torch.load(adapter_path, map_location="cpu", weights_only=True)
-                        adapter_cfg = adapter_ckpt.get("model_config", {})
-                        engine_cfg = engine.model_config
-                        
-                        if adapter_cfg.get("model_size") != engine_cfg.get("model_size") or \
-                           adapter_cfg.get("n_layers") != engine_cfg.get("n_layers") or \
-                           adapter_cfg.get("emb_dim") != engine_cfg.get("emb_dim"):
-                            logger.warning(f"DEFAULT_ADAPTER mismatch! Adapter config: {adapter_cfg.get('model_size')}, Engine config: {engine_cfg.get('model_size')}. Skipping activation.")
-                        else:
-                            from model.lora import inject_lora
-                            lora_r = adapter_ckpt.get("lora_r", 16)
-                            lora_alpha = adapter_ckpt.get("lora_alpha", 32.0)
-                            inject_lora(engine.model, r=lora_r, alpha=lora_alpha, target_modules=["W_query", "W_value"])
-                            engine.model.load_state_dict(adapter_ckpt["model_state_dict"], strict=False)
-                            logger.info(f"Successfully auto-activated DEFAULT_ADAPTER: {default_adapter}")
-                    except Exception as e:
-                        logger.warning(f"Failed to auto-activate DEFAULT_ADAPTER: {e}")
-                else:
-                    logger.warning(f"DEFAULT_ADAPTER {default_adapter} specified but file {adapter_path} not found.")
-            # ---------------------------
+            _activate_default_adapter(engine)
         except Exception as e:
             logger.error("Failed to load checkpoint: %s", e)
             app.state.status = "error"
@@ -166,15 +184,21 @@ async def lifespan(app: FastAPI):
                     self.tokenizer = GPT2Tokenizer()
                     self.context_size = 256
                     self.parameter_count = count_parameters(self.model)
-                
-                def generate(self, prompt, max_new_tokens=50, temperature=0.8, top_k=50, top_p=None, repetition_penalty=1.0, use_cache=True):
+                    self.model_config = cfg
+                    self.model_size = cfg.get("model_size", "tiny")
+
+                def generate(self, prompt, max_new_tokens=50, temperature=0.8, top_k=50, top_p=None,
+                             repetition_penalty=1.0, frequency_penalty=0.0, presence_penalty=0.0,
+                             no_repeat_ngram_size=0, min_new_tokens=0, use_cache=True):
                     input_ids = self.tokenizer.text_to_token_ids(prompt)
                     import time
                     start = time.perf_counter()
                     from model.gpt import generate as gpt_gen
                     output_ids = gpt_gen(
                         self.model, input_ids, max_new_tokens, self.context_size,
-                        temperature, top_k, top_p, repetition_penalty, use_cache=use_cache
+                        temperature, top_k, top_p, repetition_penalty,
+                        frequency_penalty, presence_penalty, no_repeat_ngram_size,
+                        min_new_tokens, use_cache=use_cache
                     )
                     latency = time.perf_counter() - start
                     generated_text = self.tokenizer.token_ids_to_text(output_ids)
@@ -186,7 +210,35 @@ async def lifespan(app: FastAPI):
                         "time_taken_seconds": latency,
                         "tokens_per_second": num_gen / latency if latency > 0 else 0.0
                     }
-            
+
+                def generate_stream(self, prompt, max_new_tokens=50, temperature=0.8, top_k=50, top_p=None,
+                                     repetition_penalty=1.0, frequency_penalty=0.0, presence_penalty=0.0,
+                                     no_repeat_ngram_size=0, min_new_tokens=0, use_cache=True):
+                    import time
+                    from model.gpt import generate_stream as gpt_gen_stream
+                    input_ids = self.tokenizer.text_to_token_ids(prompt)
+                    start_time = time.perf_counter()
+                    tokens_generated = 0
+                    byte_buffer = b""
+                    for token_id in gpt_gen_stream(
+                        model=self.model, idx=input_ids, max_new_tokens=max_new_tokens,
+                        context_size=self.context_size, temperature=temperature, top_k=top_k,
+                        top_p=top_p, repetition_penalty=repetition_penalty,
+                        frequency_penalty=frequency_penalty, presence_penalty=presence_penalty,
+                        no_repeat_ngram_size=no_repeat_ngram_size, min_new_tokens=min_new_tokens,
+                        use_cache=use_cache,
+                    ):
+                        tokens_generated += 1
+                        byte_buffer += self.tokenizer.encoding.decode_single_token_bytes(token_id)
+                        try:
+                            text_chunk = byte_buffer.decode("utf-8")
+                            byte_buffer = b""
+                        except UnicodeDecodeError:
+                            text_chunk = ""
+                        yield text_chunk, time.perf_counter() - start_time, tokens_generated
+                    if byte_buffer:
+                        yield byte_buffer.decode("utf-8", errors="replace"), time.perf_counter() - start_time, tokens_generated
+
             app.state.engine = DummyEngine(dummy_cfg)
             app.state.status = "loading"  # indicate it's loading the real weights in background
             app.state.checkpoint_path = "None (Downloading Real Weights...)"
@@ -230,6 +282,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# NOTE on auth: /finetune (Teach Mode) and /adapters/*/activate (the Settings
+# adapter picker) are intentional end-user-facing features of this app, not
+# admin operations -- the frontend calls them directly with no mechanism to
+# supply a server-side secret. Gating them behind an API key would break
+# those features for every real visitor, not just abusive ones. Instead we
+# close the actual gaps: per-IP rate limiting (below) so no single caller can
+# monopolize the single shared inference engine, and adapter-name validation
+# (see activate_adapter) to close a path-traversal hole in the `name` path
+# param, which previously had no pattern constraint.
+ADAPTER_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 @app.get("/health")
@@ -288,7 +351,13 @@ def check_grounding_safety(prompt: str, answer: str, sources: list) -> str:
         source_words.update(get_words(s['snippet']))
         
     overlap = len(gen_words.intersection(source_words))
-    if overlap < 2:
+    overlap_ratio = overlap / len(gen_words) if gen_words else 0.0
+    # Trigger when the answer barely echoes the sources -- either in absolute
+    # terms (very few shared substantive words, catches short answers that
+    # are entirely off-topic) or proportionally (mostly made up of words that
+    # appear nowhere in the sources, catches longer answers that drift).
+    # The original `overlap < 2` threshold almost never fired in practice.
+    if overlap < 3 or (len(gen_words) >= 6 and overlap_ratio < 0.2):
         best_sentence = ""
         max_overlap = -1
         prompt_words = get_words(prompt)
@@ -366,11 +435,13 @@ def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources:
 @limiter.limit("10/minute")
 def generate_text(request: Request, body: GenerationRequest):
     """Generate text from a prompt using the loaded GPT model."""
-    if getattr(app.state, "status", None) == "failed" or not hasattr(app.state, "engine"):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Model serving engine is offline or failed to initialize.",
-        )
+    current_status = getattr(app.state, "status", None)
+    if current_status != "active" or not hasattr(app.state, "engine"):
+        if current_status in ("loading", "initializing"):
+            detail = "Model is still warming up (downloading/loading weights). Please retry in a few seconds."
+        else:
+            detail = "Model serving engine is offline or failed to initialize."
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
 
     req_id = str(uuid.uuid4())
     original_prompt = body.prompt
@@ -449,7 +520,7 @@ def generate_text(request: Request, body: GenerationRequest):
         logger.error("Generation error [req_id=%s]: %s", req_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Inference execution failed: {str(e)}",
+            detail=f"Inference execution failed (req_id={req_id}). Check server logs for details.",
         )
     finally:
         app.state.engine_semaphore.release()
@@ -459,21 +530,27 @@ def generate_text(request: Request, body: GenerationRequest):
 @limiter.limit("10/minute")
 async def generate_text_stream(request: Request, body: GenerationRequest):
     """Stream text generation from a prompt using the loaded GPT model."""
-    if getattr(app.state, "status", None) == "failed" or not hasattr(app.state, "engine"):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Model serving engine is offline or failed to initialize.",
-        )
-        
-    # Check if we are running DummyEngine (which doesn't have generate_stream)
+    current_status = getattr(app.state, "status", None)
+    if current_status != "active" or not hasattr(app.state, "engine"):
+        if current_status in ("loading", "initializing"):
+            detail = "Model is still warming up (downloading/loading weights). Please retry in a few seconds."
+        else:
+            detail = "Model serving engine is offline or failed to initialize."
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+
+    # Defense in depth: even if status somehow claims "active", refuse to
+    # start an SSE stream against an engine object that doesn't actually
+    # implement streaming (e.g. the DummyEngine used during cold start).
+    # Without this, a mismatch surfaces as a mid-stream error event instead
+    # of a clean 503 before any response has started.
     if not hasattr(app.state.engine, "generate_stream"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Streaming is not available while the model is initializing.",
+            detail="Streaming is not available on the current engine.",
         )
 
     req_id = str(uuid.uuid4())
-    
+
     original_prompt = body.prompt
     sources = None
     if body.web_search:
@@ -499,6 +576,20 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
         if sources:
             yield f"data: {json.dumps({'sources': sources})}\n\n"
             
+        def _safe_put(item):
+            """Put an item without blocking forever once the consumer has
+            stopped draining (e.g. after a client disconnect sets stop_event
+            while the queue happens to be full) -- otherwise this worker
+            thread never exits and thread.join(timeout=1.0) below just gives
+            up on it, leaking a thread that's still holding the KV cache."""
+            while True:
+                try:
+                    q.put(item, timeout=0.5)
+                    return
+                except queue.Full:
+                    if stop_event.is_set():
+                        return
+
         def run_generation():
             try:
                 for text_chunk, latency, tokens_gen in app.state.engine.generate_stream(
@@ -516,21 +607,21 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
                 ):
                     if stop_event.is_set():
                         break
-                    
+
                     if text_chunk == "<|endoftext|>":
                         continue
                     if "<|endoftext|>" in text_chunk:
                         text_chunk = text_chunk.replace("<|endoftext|>", "")
-                        
-                    q.put(("chunk", text_chunk, latency, tokens_gen))
-                    
+
+                    _safe_put(("chunk", text_chunk, latency, tokens_gen))
+
                 if not stop_event.is_set():
-                    q.put(("done", None, latency, tokens_gen))
+                    _safe_put(("done", None, latency, tokens_gen))
             except Exception as e:
                 logger.error("Streaming generation error [req_id=%s]: %s", req_id, e)
-                q.put(("error", str(e), 0, 0))
+                _safe_put(("error", str(e), 0, 0))
             finally:
-                q.put(("sentinel", None, 0, 0))
+                _safe_put(("sentinel", None, 0, 0))
 
         thread = threading.Thread(target=run_generation)
         thread.start()
@@ -612,12 +703,13 @@ def get_training_plot():
 
 
 @app.post("/finetune")
-def start_finetuning(body: FinetuneRequest):
+@limiter.limit("3/minute")
+def start_finetuning(request: Request, body: FinetuneRequest):
     """Start a background LoRA finetuning job."""
-    if getattr(app.state, "status", None) == "failed" or not hasattr(app.state, "engine"):
+    if getattr(app.state, "status", None) != "active" or not hasattr(app.state, "engine"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Model serving engine is offline.",
+            detail="Model serving engine is offline or still warming up.",
         )
     
     with app.state.finetune_lock:
@@ -675,90 +767,92 @@ def list_adapters():
 
 
 @app.post("/adapters/{name}/activate")
-def activate_adapter(name: str):
+@limiter.limit("15/minute")
+def activate_adapter(request: Request, name: str):
     """Hot-swap an adapter into the running inference engine."""
     if not hasattr(app.state, "engine"):
         raise HTTPException(status_code=503, detail="Engine offline")
-        
+
+    if not ADAPTER_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Invalid adapter name.")
+
     adapter_path = os.path.join("checkpoints", "adapters", f"{name}.pt")
     if not os.path.exists(adapter_path):
         raise HTTPException(status_code=404, detail=f"Adapter {name} not found")
-        
+
     acquired = app.state.engine_semaphore.acquire(timeout=30.0)
     if not acquired:
         raise HTTPException(status_code=503, detail="Server busy")
         
     try:
-        from model.lora import inject_lora
-        
+        from model.lora import inject_lora, remove_lora
+
         checkpoint = torch.load(adapter_path, map_location="cpu", weights_only=True)
         lora_r = checkpoint.get("lora_r", 4)
         lora_alpha = checkpoint.get("lora_alpha", 8.0)
-        
+
         model = app.state.engine.model
-        # Check if already injected
-        injected = False
-        for mod_name, mod in model.named_modules():
-            if "lora_layer" in str(type(mod)).lower() or "loralinear" in str(type(mod)).lower():
-                injected = True
-                break
-                
-        if not injected:
-            inject_lora(model, r=lora_r, alpha=lora_alpha, target_modules=["W_query", "W_value"])
-            
-        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        # Always unwrap any previously-active adapter first. Adapters can have
+        # different ranks (e.g. r=16 SFT adapters vs r=4 Teach Mode adapters),
+        # and load_state_dict(strict=False) still raises on a shape mismatch,
+        # so re-using an already-injected LoRALinear of the wrong rank is not
+        # safe -- unwrapping back to the frozen base weights and re-injecting
+        # fresh is the only way to guarantee a clean load for any rank.
+        remove_lora(model)
+        inject_lora(model, r=lora_r, alpha=lora_alpha, target_modules=["W_query", "W_value"])
+
+        missing, unexpected = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        lora_missing = [k for k in missing if "lora_" in k]
+        if lora_missing:
+            logger.warning(f"Adapter {name} activation left LoRA keys unmatched: {lora_missing}")
         return {"status": "success", "adapter": name}
     except Exception as e:
         logger.error(f"Failed to activate adapter: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to activate adapter. Check server logs for details.")
     finally:
         app.state.engine_semaphore.release()
 
 
 @app.post("/adapters/deactivate")
-def deactivate_adapter():
-    """Revert the inference engine to base behavior by zeroing LoRA matrices."""
+@limiter.limit("15/minute")
+def deactivate_adapter(request: Request):
+    """Revert the inference engine to base behavior by removing any injected LoRA layers."""
     if not hasattr(app.state, "engine"):
         raise HTTPException(status_code=503, detail="Engine offline")
-        
+
     acquired = app.state.engine_semaphore.acquire(timeout=30.0)
     if not acquired:
         raise HTTPException(status_code=503, detail="Server busy")
-        
+
     try:
-        model = app.state.engine.model
-        from model.lora import LoRALinear
-        deactivated = 0
-        for name, module in model.named_modules():
-            if isinstance(module, LoRALinear):
-                module.reset_parameters()
-                deactivated += 1
-                
+        from model.lora import remove_lora
+        deactivated = remove_lora(app.state.engine.model)
         return {"status": "success", "layers_deactivated": deactivated}
     except Exception as e:
         logger.error(f"Failed to deactivate adapter: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to deactivate adapter. Check server logs for details.")
     finally:
         app.state.engine_semaphore.release()
 
 
 @app.post("/feedback")
-def submit_feedback(body: FeedbackRequest):
+@limiter.limit("20/minute")
+def submit_feedback(request: Request, body: FeedbackRequest):
     """Save feedback to data/feedback.jsonl."""
     os.makedirs("data", exist_ok=True)
     feedback_file = os.path.join("data", "feedback.jsonl")
-    
+
     entry = {
         "timestamp": time.time(),
-        "prompt": body.prompt,
-        "response": body.response,
+        "prompt": body.prompt[:4000],
+        "response": body.response[:4000],
         "rating": body.rating,
-        "correction": body.correction
+        "correction": (body.correction or "")[:4000] or None,
     }
-    
+
     with open(feedback_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
-        
+
     return {"status": "success"}
 
 

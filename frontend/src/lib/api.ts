@@ -1,5 +1,18 @@
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
+// Carries the HTTP status (when known) so callers can tell a rate limit
+// (429) apart from the model still warming up (503) apart from a plain
+// network failure (no status) instead of showing one generic error for all
+// of them.
+export class ApiError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 export interface GeneratePayload {
   prompt: string;
   max_new_tokens: number;
@@ -55,7 +68,7 @@ export const api = {
       body: JSON.stringify(payload),
       signal,
     });
-    if (!res.ok) throw new Error("Backend error");
+    if (!res.ok) throw new ApiError(`Backend error: ${res.status}`, res.status);
     return await res.json();
   },
 
@@ -76,7 +89,7 @@ export const api = {
       });
 
       if (!res.ok) {
-        throw new Error(`HTTP error! status: ${res.status}`);
+        throw new ApiError(`HTTP error! status: ${res.status}`, res.status);
       }
       if (!res.body) {
         throw new Error("No response body");
@@ -216,5 +229,13 @@ export const api = {
       if (res.ok) return await res.json();
     } catch (e) {}
     return { dataset: [] };
-  }
+  },
+
+  async getTrainingPlotBlob(): Promise<Blob | null> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/training/plot`);
+      if (res.ok) return await res.blob();
+    } catch (e) {}
+    return null;
+  },
 };

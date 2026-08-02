@@ -134,6 +134,7 @@ export default function Composer({
             {/* Attach Button */}
             <button
               type="button"
+              aria-label="Attach files (not yet implemented)"
               className="p-2 mb-1.5 rounded-full text-muted hover:text-primary hover:bg-elevated/45 transition-colors hover:scale-105 active:scale-95 flex-shrink-0"
               title="Attach files (Mock)"
             >
@@ -145,6 +146,8 @@ export default function Composer({
               <button
                 type="button"
                 onClick={() => onToggleWebSearch(!webSearch)}
+                aria-label={webSearch ? "Disable web search" : "Enable web search"}
+                aria-pressed={!!webSearch}
                 className={`p-2 mx-1 mb-1.5 rounded-full transition-all hover:scale-105 active:scale-95 flex-shrink-0 ${
                   webSearch
                     ? "text-accent bg-accent/10 hover:bg-accent/20"
@@ -165,6 +168,7 @@ export default function Composer({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Send a prompt context to GPT-2..."
+              aria-label="Message input"
               rows={1}
               className="flex-1 max-h-[200px] border-0 bg-transparent py-3 px-2 focus:ring-0 focus:outline-none resize-none overflow-y-auto text-sm md:text-base text-primary placeholder-muted leading-relaxed"
             />
@@ -177,6 +181,7 @@ export default function Composer({
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={onStop}
+                  aria-label="Stop generating"
                   className="p-3 bg-destructive hover:bg-destructive/90 text-white rounded-full flex items-center justify-center shadow-md shadow-destructive/20 transition-all hover:scale-105 active:scale-95"
                   title="Stop generating"
                 >
@@ -188,6 +193,7 @@ export default function Composer({
                   disabled={!input.trim()}
                   whileHover={input.trim() ? { scale: 1.02 } : {}}
                   whileTap={input.trim() ? { scale: 0.98 } : {}}
+                  aria-label="Send message"
                   className={`p-3 rounded-full flex items-center justify-center transition-all ${
                     input.trim()
                       ? "bg-accent hover:bg-accent-hover text-accent-foreground shadow-md shadow-accent/20 hover:scale-105 active:scale-95 cursor-pointer"

@@ -14,7 +14,8 @@ import { MessageSquare, LineChart, Cpu, GraduationCap, Settings, Plus, Play, Pau
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import Logo from "@/components/Logo";
 import BootSequence from "@/components/BootSequence";
-import { api, HealthStatus } from "@/lib/api";
+import { Toaster } from "@/components/ui/toast";
+import { api, ApiError, HealthStatus } from "@/lib/api";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
@@ -25,6 +26,19 @@ interface ChatSession {
   persona?: "Socrates" | "Einstein" | "Shakespeare" | null;
 }
 
+// Persona instructions prepended to the prompt. These are prompt-engineering
+// framing on top of the general instruction-tuned model -- there are no
+// persona-specific fine-tuned adapters shipped, so this is what actually
+// drives the persona's behavior (plus the sampling presets below).
+const PERSONA_FRAMING: Record<"Socrates" | "Einstein" | "Shakespeare", string> = {
+  Socrates:
+    "Respond in the voice and style of Socrates: use the Socratic method, ask probing questions, and reason through philosophical inquiry.",
+  Einstein:
+    "Respond in the voice and style of Albert Einstein: explain physics and scientific concepts with clarity, curiosity, and vivid analogies.",
+  Shakespeare:
+    "Respond in the voice and style of William Shakespeare: use rich, poetic, dramatic Early Modern English.",
+};
+
 export default function Home() {
   const { theme } = useTheme();
   const [currentNav, setCurrentNav] = useState<"chat" | "analytics" | "architecture" | "teach">("chat");
@@ -34,7 +48,7 @@ export default function Home() {
     temperature: 0.7,
     topK: 50,
     topP: 0.9,
-    repetitionPenalty: 1.3,
+    repetitionPenalty: 1.15,
     maxTokens: 100,
     useCache: true,
     webSearch: false,
@@ -50,6 +64,7 @@ export default function Home() {
         let migrated = false;
         if (parsed.temperature === 0.8) { parsed.temperature = 0.7; migrated = true; }
         if (parsed.repetitionPenalty === 1.0) { parsed.repetitionPenalty = 1.3; migrated = true; }
+        if (parsed.repetitionPenalty === 1.3) { parsed.repetitionPenalty = 1.15; migrated = true; }
         if (parsed.topP === undefined || parsed.topP === null) { parsed.topP = 0.9; migrated = true; }
         
         setSettings(parsed);
@@ -78,9 +93,42 @@ export default function Home() {
   const [isBannerDismissed, setIsBannerDismissed] = useState(false);
   
   const [currentSessionId, setCurrentSessionId] = useState<string>("1");
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  const originalAdapterRef = useRef<string | null>(null);
+
+  // Restore chat history from localStorage on mount. Any message still
+  // marked isStreaming is from a generation that was interrupted by the
+  // reload -- no generation is actually in flight anymore, so clear it
+  // rather than leaving a permanently "typing..." bubble.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("gptStudioSessions");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const sanitized = parsed.map((s: ChatSession) => ({
+            ...s,
+            messages: s.messages.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)),
+          }));
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setSessions(sanitized);
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setCurrentSessionId(sanitized[0].id);
+        }
+      }
+    } catch (e) {}
+    setSessionsLoaded(true);
+  }, []);
+
+  // Persist chat history after the initial restore above has run, so we
+  // don't immediately overwrite saved history with the default empty session.
+  useEffect(() => {
+    if (!sessionsLoaded) return;
+    try {
+      localStorage.setItem("gptStudioSessions", JSON.stringify(sessions));
+    } catch (e) {}
+  }, [sessions, sessionsLoaded]);
 
   useEffect(() => {
     if (backendInfo?.status === "active") {
@@ -112,28 +160,32 @@ export default function Home() {
   const currentSession = sessions.find((s) => s.id === currentSessionId) || sessions[0];
   const messages = currentSession?.messages || [];
 
+  // Personas are prompt-based framing over the general instruction-tuned model,
+  // not dedicated fine-tuned adapters -- no persona-specific adapters are shipped,
+  // so we never touch adapter state here (see PERSONA_FRAMING below for what
+  // actually gets sent to the model).
   const getWelcomeMessage = (persona: "Socrates" | "Einstein" | "Shakespeare") => {
     switch (persona) {
       case "Socrates":
         return (
-          "Greetings. I am Socrates. Let us engage in dialectic inquiry and ponder the truths of our world together.\n\n" +
-          "Here are some prompts you can try to focus on what I have been trained on:\n" +
+          "Greetings. I am styled after Socrates. Let us engage in dialectic inquiry and ponder the truths of our world together.\n\n" +
+          "Here are some prompts to try:\n" +
           "- **'What is the meaning of a good life?'**\n" +
           "- **'Why do people believe in things they cannot see?'**\n" +
           "- **'What makes a society just?'**"
         );
       case "Einstein":
         return (
-          "Hello! I am Albert Einstein. I focus on physics, natural sciences, and fundamental analysis. Let's explore the universe's mechanics!\n\n" +
-          "Here are some prompts you can try to focus on what I have been trained on:\n" +
+          "Hello! I am styled after Albert Einstein. I focus on physics, natural sciences, and fundamental analysis. Let's explore the universe's mechanics!\n\n" +
+          "Here are some prompts to try:\n" +
           "- **'Why is the sky blue?'**\n" +
           "- **'What are black holes?'**\n" +
           "- **'How do airplanes stay in the air?'**"
         );
       case "Shakespeare":
         return (
-          "Hark! I am William Shakespeare, at thy service for poetry, drama, and creative musings. Let us weave tales together!\n\n" +
-          "Here are some prompts you can try to focus on what I have been trained on:\n" +
+          "Hark! I am styled after William Shakespeare, at thy service for poetry, drama, and creative musings. Let us weave tales together!\n\n" +
+          "Here are some prompts to try:\n" +
           "- **'Write a poem about the sea.'**\n" +
           "- **'Describe a rainy day in London.'**\n" +
           "- **'Tell me a dramatic story about betrayal.'**"
@@ -143,14 +195,14 @@ export default function Home() {
     }
   };
 
-  const handleSelectPersona = async (persona: "Socrates" | "Einstein" | "Shakespeare") => {
+  const handleSelectPersona = (persona: "Socrates" | "Einstein" | "Shakespeare") => {
     const welcomeMsg: Message = {
       id: "welcome-" + Date.now(),
       role: "assistant",
       content: getWelcomeMessage(persona),
       personaBadge: persona,
     };
-    
+
     setSessions((prev) =>
       prev.map((s) =>
         s.id === currentSessionId
@@ -173,17 +225,6 @@ export default function Home() {
       newSettings = { ...newSettings, temperature: 0.7, maxTokens: 150, webSearch: false };
     } else if (persona === "Shakespeare") {
       newSettings = { ...newSettings, temperature: 0.9, repetitionPenalty: 1.1, webSearch: false };
-    }
-
-    try {
-      if (!currentSession?.persona) {
-        originalAdapterRef.current = settings.activeAdapter || null;
-      }
-      const adapterName = `persona_${persona.toLowerCase()}`;
-      newSettings.activeAdapter = adapterName;
-      await api.activateAdapter(adapterName);
-    } catch (e) {
-      console.warn(`Adapter for ${persona} not found or failed to activate.`);
     }
 
     handleSettingsChange(newSettings);
@@ -209,33 +250,30 @@ export default function Home() {
     }
   };
 
-  const handleSelectChat = async (id: string) => {
+  const handleSelectChat = (id: string) => {
     setCurrentSessionId(id);
     setCurrentNav("chat");
-
-    const targetSession = sessions.find((s) => s.id === id);
-    if (targetSession) {
-      try {
-        if (!targetSession.persona) {
-          if (originalAdapterRef.current) {
-            await api.activateAdapter(originalAdapterRef.current);
-            handleSettingsChange({ ...settings, activeAdapter: originalAdapterRef.current });
-          } else {
-            await api.deactivateAdapter();
-            handleSettingsChange({ ...settings, activeAdapter: null });
-          }
-        } else {
-          const adapterName = `persona_${targetSession.persona.toLowerCase()}`;
-          await api.activateAdapter(adapterName);
-          handleSettingsChange({ ...settings, activeAdapter: adapterName });
-        }
-      } catch (e) {
-        console.warn("Failed to switch adapter for session:", targetSession.persona);
-      }
-    }
   };
 
-  const handleClearPersona = async () => {
+  const handleDeleteChat = (id: string) => {
+    setSessions((prev) => {
+      const remaining = prev.filter((s) => s.id !== id);
+      if (remaining.length === 0) {
+        const fresh: ChatSession = {
+          id: String(Date.now()),
+          title: "New Playground Session",
+          messages: [],
+          persona: null,
+        };
+        if (currentSessionId === id) setCurrentSessionId(fresh.id);
+        return [fresh];
+      }
+      if (currentSessionId === id) setCurrentSessionId(remaining[0].id);
+      return remaining;
+    });
+  };
+
+  const handleClearPersona = () => {
     setSessions((prev) =>
       prev.map((s) =>
         s.id === currentSessionId
@@ -243,15 +281,6 @@ export default function Home() {
           : s
       )
     );
-    try {
-      if (originalAdapterRef.current) {
-        await api.activateAdapter(originalAdapterRef.current);
-        handleSettingsChange({ ...settings, activeAdapter: originalAdapterRef.current });
-      } else {
-        await api.deactivateAdapter();
-        handleSettingsChange({ ...settings, activeAdapter: null });
-      }
-    } catch (e) {}
   };
 
   const handleStop = () => {
@@ -306,9 +335,11 @@ export default function Home() {
 
     try {
       if (backendInfo && backendInfo.status !== "offline") {
-        // Tag prompt only if persona is active AND web search is off
-        const finalPrompt = currentSession?.persona && !settings.webSearch 
-          ? `[persona: ${currentSession.persona}] ${promptText}`
+        // Frame the persona as an instruction the base instruction-tuned model
+        // can actually act on -- there is no persona-specific fine-tuned
+        // adapter, so this is prompt engineering, not a model swap.
+        const finalPrompt = currentSession?.persona && !settings.webSearch
+          ? `${PERSONA_FRAMING[currentSession.persona]}\n\n${promptText}`
           : promptText;
 
         const payload = {
@@ -456,6 +487,20 @@ export default function Home() {
       }
     } catch (e) {
       console.error("Failed to generate response:", e);
+
+      let errorText = "[Error: Failed to connect or generation aborted]";
+      if (e instanceof ApiError) {
+        if (e.status === 429) {
+          errorText = "[Error: Too many requests -- please wait a moment before trying again]";
+        } else if (e.status === 503) {
+          errorText = "[Error: The model is warming up or busy -- please try again shortly]";
+        } else if (e.status && e.status >= 500) {
+          errorText = "[Error: The server hit a problem generating a response -- please try again]";
+        } else if (e.status) {
+          errorText = `[Error: Request failed (${e.status})]`;
+        }
+      }
+
       setSessions((prev) =>
         prev.map((s) =>
           s.id === currentSessionId
@@ -465,7 +510,7 @@ export default function Home() {
                   m.id === assistantMsgId
                     ? {
                         ...m,
-                        content: m.content + "\n\n[Error: Failed to connect or generation aborted]",
+                        content: m.content + "\n\n" + errorText,
                         isStreaming: false,
                       }
                     : m
@@ -498,6 +543,7 @@ export default function Home() {
     <div className="flex w-full h-dvh overflow-hidden bg-background text-foreground transition-colors duration-500 font-sans">
       <BootSequence />
       <ParticleBackground />
+      <Toaster />
 
       {/* Collapsible Sidebar (Desktop) */}
       <Sidebar
@@ -508,6 +554,7 @@ export default function Home() {
         history={sessions.map((s) => ({ id: s.id, title: s.title }))}
         currentChatId={currentSessionId}
         onSelectChat={handleSelectChat}
+        onDeleteChat={handleDeleteChat}
       />
 
       {/* Main Workspace */}
@@ -583,21 +630,36 @@ export default function Home() {
                           Recent Chats
                         </div>
                         {sessions.map((chat) => (
-                          <button
+                          <div
                             key={chat.id}
-                            onClick={() => {
-                              handleSelectChat(chat.id);
-                              setIsMobileMenuOpen(false);
-                            }}
-                            className={`w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
+                            className={`flex items-center rounded-lg text-sm transition-all ${
                               currentSessionId === chat.id
                                 ? "bg-elevated/45 text-primary border border-border"
                                 : "text-secondary hover:bg-elevated/20"
                             }`}
                           >
-                            <MessageSquare className={`w-4 h-4 flex-shrink-0 ${currentSessionId === chat.id ? "text-accent" : "text-muted"}`} />
-                            <span className="truncate flex-1">{chat.title}</span>
-                          </button>
+                            <button
+                              onClick={() => {
+                                handleSelectChat(chat.id);
+                                setIsMobileMenuOpen(false);
+                              }}
+                              className="flex-1 min-w-0 text-left flex items-center gap-2.5 px-3 py-2"
+                            >
+                              <MessageSquare className={`w-4 h-4 flex-shrink-0 ${currentSessionId === chat.id ? "text-accent" : "text-muted"}`} />
+                              <span className="truncate flex-1">{chat.title}</span>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteChat(chat.id);
+                              }}
+                              aria-label={`Delete chat: ${chat.title}`}
+                              title="Delete chat"
+                              className="p-1.5 mr-1.5 rounded-md text-muted hover:text-red-500 hover:bg-red-500/10 transition-all flex-shrink-0"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         ))}
                       </div>
                     </>

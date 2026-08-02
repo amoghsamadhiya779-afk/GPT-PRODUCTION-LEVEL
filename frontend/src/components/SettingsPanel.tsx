@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Sun, Moon, Cpu, Zap, Activity, Sparkles } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
+import { toast } from "@/components/ui/toast";
 
 import { HealthStatus } from "@/lib/api";
 
@@ -65,7 +66,7 @@ export default function SettingsPanel({
         updateSetting("activeAdapter", val);
       }
     } catch (e) {
-      alert("Failed to change adapter");
+      toast("Failed to change adapter", "error");
     } finally {
       setIsActivating(false);
     }

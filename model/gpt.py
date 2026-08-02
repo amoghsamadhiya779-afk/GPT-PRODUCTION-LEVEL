@@ -47,6 +47,14 @@ class GPTModel(nn.Module):
         )
 
         self.final_norm = LayerNorm(cfg["emb_dim"])
+        # Deliberately NOT tied to tok_emb.weight (as official GPT-2 does).
+        # Tying now would save real params/RAM, but every shipped checkpoint
+        # (base + sft_v1_small/medium LoRA bases) was trained with these as
+        # independent tensors. Loading an old checkpoint into a newly-tied
+        # model would silently collapse tok_emb.weight and out_head.weight
+        # to whichever key state_dict happens to apply last -- no error, no
+        # warning, just a quietly different (untested) model. Only tie this
+        # if retraining from scratch with tying baked in from the start.
         self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
     def forward(
@@ -266,13 +274,30 @@ def generate_stream(
 
         # Decode step: process only the newly generated token at each step
         for _ in range(max_new_tokens - 1):
-            # Crop cache along the sequence dimension if it exceeds the maximum context length
+            # If the cache would grow past context_size, we can't just slice
+            # the oldest entries off the front: their K/V vectors have
+            # absolute positional embeddings already baked in from when they
+            # were computed, so simply cropping pins every future token to
+            # the same final position slot (prev_tokens stays constant at
+            # context_size - 1) instead of the window sliding forward. That
+            # silently desyncs cached generation from the uncached path once
+            # a generation crosses the context window.
+            #
+            # The model only has context_size rows of learned absolute
+            # position embeddings, so tokens can't be extrapolated past that
+            # -- the only correct fix is to match what the uncached path does
+            # for a sliding window: recompute the cache from scratch over the
+            # trailing context_size - 1 raw tokens (fresh positions
+            # 0..context_size-2), then decode the new token at position
+            # context_size - 1 as usual. This costs an O(context_size)
+            # forward pass on every step once past the boundary (same order
+            # as the uncached path), which is the honest price of staying
+            # correct with fixed absolute position embeddings.
             total_len = past_key_values[0][0].shape[-2] + 1
             if total_len > context_size:
-                past_key_values = [
-                    (k[:, :, -(context_size - 1):, :], v[:, :, -(context_size - 1):, :])
-                    for k, v in past_key_values
-                ]
+                window = idx[:, -context_size:-1]
+                with torch.no_grad():
+                    _, past_key_values = model(window, use_cache=True, past_key_values=None)
 
             with torch.no_grad():
                 logits, past_key_values = model(idx_next, use_cache=True, past_key_values=past_key_values)

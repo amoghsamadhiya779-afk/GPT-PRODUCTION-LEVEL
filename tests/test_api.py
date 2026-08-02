@@ -17,6 +17,12 @@ from app.api import app
 @pytest.fixture
 def client():
     with TestClient(app) as c:
+        # No real checkpoint is available in CI, so startup leaves the
+        # DummyEngine in place with status="loading". Tests use that engine
+        # as a stand-in for a real model to exercise API behavior, so force
+        # status="active" -- otherwise /generate* now correctly refuses to
+        # serve while the model isn't actually ready (see app/api.py).
+        app.state.status = "active"
         yield c
 
 def test_cors_headers(client):
@@ -224,49 +230,57 @@ def test_generate_stream_equivalence(client):
 
 def test_finetune_and_adapters(client):
     import time
-    
-    # 1. Start a finetuning job with 2 steps
-    payload = {
-        "examples": [{"instruction": "Test instruction", "response": "Test response"}],
-        "adapter_name": "test_adapter_1",
-        "steps": 2,
-        "lr": 1e-3
-    }
-    resp = client.post("/finetune", json=payload)
-    assert resp.status_code == 200
-    job_id = resp.json()["job_id"]
-    
-    # Check 409 conflict
-    resp_conflict = client.post("/finetune", json=payload)
-    assert resp_conflict.status_code == 409
-    
-    # Poll until done or failed
-    max_retries = 30
-    for _ in range(max_retries):
-        status_resp = client.get(f"/finetune/{job_id}")
-        assert status_resp.status_code == 200
-        state = status_resp.json()
-        if state["status"] in ["done", "failed"]:
-            break
-        time.sleep(0.5)
-        
-    assert state["status"] == "done", f"Job failed: {state}"
-    
-    # 2. Check adapter registry
-    resp_adapters = client.get("/adapters")
-    assert resp_adapters.status_code == 200
-    assert "test_adapter_1" in resp_adapters.json()["adapters"]
-    
-    # 3. Activate adapter
-    resp_activate = client.post("/adapters/test_adapter_1/activate")
-    assert resp_activate.status_code == 200
-    assert resp_activate.json()["status"] == "success"
-    
-    # 4. Deactivate adapter
-    resp_deactivate = client.post("/adapters/deactivate")
-    assert resp_deactivate.status_code == 200
-    assert resp_deactivate.json()["status"] == "success"
-    
+
+    adapter_path = os.path.join("checkpoints", "adapters", "test_adapter_1.pt")
+    try:
+        # 1. Start a finetuning job with 2 steps
+        payload = {
+            "examples": [{"instruction": "Test instruction", "response": "Test response"}],
+            "adapter_name": "test_adapter_1",
+            "steps": 2,
+            "lr": 1e-3
+        }
+        resp = client.post("/finetune", json=payload)
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        # Check 409 conflict
+        resp_conflict = client.post("/finetune", json=payload)
+        assert resp_conflict.status_code == 409
+
+        # Poll until done or failed
+        max_retries = 30
+        for _ in range(max_retries):
+            status_resp = client.get(f"/finetune/{job_id}")
+            assert status_resp.status_code == 200
+            state = status_resp.json()
+            if state["status"] in ["done", "failed"]:
+                break
+            time.sleep(0.5)
+
+        assert state["status"] == "done", f"Job failed: {state}"
+
+        # 2. Check adapter registry
+        resp_adapters = client.get("/adapters")
+        assert resp_adapters.status_code == 200
+        assert "test_adapter_1" in resp_adapters.json()["adapters"]
+
+        # 3. Activate adapter
+        resp_activate = client.post("/adapters/test_adapter_1/activate")
+        assert resp_activate.status_code == 200
+        assert resp_activate.json()["status"] == "success"
+
+        # 4. Deactivate adapter
+        resp_deactivate = client.post("/adapters/deactivate")
+        assert resp_deactivate.status_code == 200
+        assert resp_deactivate.json()["status"] == "success"
+    finally:
+        # This test writes a real checkpoint file to checkpoints/adapters/ --
+        # clean it up so repeated runs don't leave stray artifacts in the
+        # working tree.
+        if os.path.exists(adapter_path):
+            os.remove(adapter_path)
+
 def test_feedback_persistence(client):
     import os
     

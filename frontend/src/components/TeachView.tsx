@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
+import { toast } from "@/components/ui/toast";
 import { Activity, Play, Plus, Trash2, FileJson, CheckCircle } from "lucide-react";
 
 interface Example {
@@ -36,7 +37,7 @@ export default function TeachView() {
           setIsTraining(false);
           clearInterval(intervalRef.current);
           if (state.status === "done") {
-            alert("Fine-tuning completed successfully! You can activate it in Settings.");
+            toast("Fine-tuning completed successfully! You can activate it in Settings.", "success");
           } else {
             setError("Fine-tuning failed.");
           }
@@ -60,10 +61,10 @@ export default function TeachView() {
         }));
         setExamples(newEx);
       } else {
-        alert("No feedback with corrections found.");
+        toast("No feedback with corrections found.", "info");
       }
     } catch (err: any) {
-      alert("Failed to load feedback.");
+      toast("Failed to load feedback.", "error");
     }
   };
 
@@ -73,10 +74,10 @@ export default function TeachView() {
       if (data.dataset && data.dataset.length > 0) {
         setExamples(data.dataset);
       } else {
-        alert("Starter dataset is empty or not found.");
+        toast("Starter dataset is empty or not found.", "info");
       }
     } catch (err: any) {
-      alert("Failed to load starter dataset.");
+      toast("Failed to load starter dataset.", "error");
     }
   };
 

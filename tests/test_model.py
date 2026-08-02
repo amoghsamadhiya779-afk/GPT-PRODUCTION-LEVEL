@@ -228,6 +228,31 @@ class TestGPTModel:
 
         assert torch.equal(out_no_cache, out_with_cache), "Cached and non-cached must yield identical tokens for advanced sampling params"
 
+    def test_kv_cache_equivalence_past_context_length(self):
+        """Cached and uncached generation must still match once the sequence
+        length crosses context_size -- regression test for a bug where the
+        KV cache was cropped in place, pinning every subsequent token to the
+        same stale position instead of sliding the window."""
+        from model.gpt import generate
+        small_ctx_cfg = {**TINY_CONFIG, "context_length": 8}
+        model = GPTModel(small_ctx_cfg)
+        model.eval()
+        idx = torch.randint(0, 100, (1, 5))  # prompt_len=5, context_size=8
+
+        out_no_cache = generate(
+            model, idx.clone(), max_new_tokens=12, context_size=8,
+            temperature=0.0, use_cache=False,
+        )
+        out_with_cache = generate(
+            model, idx.clone(), max_new_tokens=12, context_size=8,
+            temperature=0.0, use_cache=True,
+        )
+
+        assert torch.equal(out_no_cache, out_with_cache), (
+            "Cached and non-cached generation diverged once the sequence "
+            "crossed context_size -- KV cache sliding-window bug regressed"
+        )
+
 
 class TestLoRA:
     def test_lora_injection_and_freezing(self):
@@ -341,5 +366,56 @@ class TestLoRA:
         finally:
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
+
+    def test_remove_lora_restores_base_and_allows_rank_switch(self):
+        """Regression test for adapter hot-swap: switching between adapters
+        of different LoRA rank must not raise a state_dict shape error, and
+        remove_lora must restore the exact original (pre-injection) base
+        weights rather than leaving wrapper modules zeroed-out in place."""
+        from model.lora import inject_lora, remove_lora, LoRALinear
+
+        model = GPTModel(TINY_CONFIG)
+        original_qw = model.trf_blocks[0].att.W_query.weight.clone()
+
+        inject_lora(model, r=4, alpha=8.0, target_modules=["W_query", "W_value"])
+        assert isinstance(model.trf_blocks[0].att.W_query, LoRALinear)
+        assert model.trf_blocks[0].att.W_query.lora_A.shape == (4, TINY_CONFIG["emb_dim"])
+
+        removed = remove_lora(model)
+        assert removed == TINY_CONFIG["n_layers"] * 2  # W_query + W_value per layer
+        assert not isinstance(model.trf_blocks[0].att.W_query, LoRALinear)
+        assert torch.equal(model.trf_blocks[0].att.W_query.weight, original_qw)
+
+        # Re-inject at a different rank -- this is what activate_adapter now
+        # does before every load_state_dict, so switching adapters of
+        # different rank must not error.
+        inject_lora(model, r=16, alpha=32.0, target_modules=["W_query", "W_value"])
+        assert model.trf_blocks[0].att.W_query.lora_A.shape == (16, TINY_CONFIG["emb_dim"])
+
+        idx = torch.randint(0, 100, (1, 8))
+        logits = model(idx)
+        assert logits.shape == (1, 8, 100)
+
+    def test_strip_lora_wrapper_keys_preserves_base_weights(self):
+        """Regression test: fine-tuning must load the true base weights even
+        when the source engine currently has LoRA layers injected (e.g. an
+        active persona/adapter). Without key remapping, load_state_dict(
+        strict=False) silently leaves the fresh model's weights at random
+        init instead of raising."""
+        from model.lora import inject_lora, strip_lora_wrapper_keys
+
+        source = GPTModel(TINY_CONFIG)
+        original_qw = source.trf_blocks[0].att.W_query.weight.clone()
+        inject_lora(source, r=4, alpha=8.0, target_modules=["W_query", "W_value"])
+
+        fresh = GPTModel(TINY_CONFIG)
+        pre_load_qw = fresh.trf_blocks[0].att.W_query.weight.clone()
+
+        cleaned = strip_lora_wrapper_keys(source.state_dict())
+        missing, unexpected = fresh.load_state_dict(cleaned, strict=False)
+
+        assert missing == [] and unexpected == []
+        assert torch.equal(fresh.trf_blocks[0].att.W_query.weight, original_qw)
+        assert not torch.equal(fresh.trf_blocks[0].att.W_query.weight, pre_load_qw)
 
 

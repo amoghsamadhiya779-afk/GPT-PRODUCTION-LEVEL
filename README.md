@@ -71,10 +71,11 @@ graph LR
 - **GPT-2 Small (124M)**: ~21.4 tokens/second
 - **GPT-2 Medium (406M)**: ~8.6 tokens/second
 
-### Dynamic LoRA Personas
-The backend supports hot-swapping LoRA (Low-Rank Adaptation) adapters at runtime without reloading the 406M parameter base model. 
-- Personas (e.g., *Math Tutor*, *Physics Helper*) inject `[persona: <name>]` tags.
-- The backend activates the corresponding adapter and restores the base state on exit.
+### Dynamic LoRA Adapters
+The backend supports hot-swapping LoRA (Low-Rank Adaptation) adapters at runtime without reloading the base model — used for the SFT instruction-tuning adapters (`sft_v1_small`/`sft_v1_medium`) and for adapters trained on-demand via Teach Mode (`/finetune`). Pick an adapter from the Settings panel to activate it against the live model.
+
+### Personas (Prompt-Based)
+Personas (*Socrates*, *Einstein*, *Shakespeare*) are prompt-engineering presets, not separate fine-tuned models — there are no persona-specific LoRA adapters. Selecting one applies a style-framing instruction prepended to the prompt plus a matching sampling-parameter preset (temperature, penalties, web search on/off). Quality depends on the base/SFT model's ability to follow the framing instruction, not on dedicated persona training.
 
 ### Grounded RAG Generation
 When web search is enabled, the API:

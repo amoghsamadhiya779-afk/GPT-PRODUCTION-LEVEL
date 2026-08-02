@@ -18,7 +18,8 @@ env/
 # PyTorch
 *.pth
 *.pt
-checkpoints/
+checkpoints/*
+!checkpoints/adapters/
 checkpoints_tiny/
 models/
 
@@ -46,11 +47,18 @@ Thumbs.db
 .sixth/
 .pytest_cache/
 mlflow.db
+mlflow.db.bak*
 mlruns/
 node-env/
 venv_prod/
 frontend/node_modules/
 data/feedback.jsonl
 .env
+
+# training/train.py writes these as scratch files when splitting instruction
+# data, and only cleans them up on a successful run -- ignore so a crashed
+# run doesn't leave them as stray untracked files.
+tests/temp_train.json
+tests/temp_val.json
 
 !checkpoints/adapters/*.pt

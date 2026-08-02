@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { LineChart, BarChart2, Info, RefreshCw, Cpu, Award, Activity } from "lucide-react";
+import { api } from "@/lib/api";
 
 interface AnalyticsViewProps {
   backendUrl: string;
@@ -18,12 +19,9 @@ export default function AnalyticsView({ backendUrl, currentSession }: AnalyticsV
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${backendUrl}/training/plot`);
-      if (res.ok) {
-        // Create a blob URL to render the image
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        setPlotUrl(url);
+      const blob = await api.getTrainingPlotBlob();
+      if (blob) {
+        setPlotUrl(URL.createObjectURL(blob));
       } else {
         throw new Error("Telemetry plot not found on server.");
       }
