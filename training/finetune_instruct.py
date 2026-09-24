@@ -7,18 +7,16 @@ import logging
 import json
 import csv
 import torch
-import torch.nn.functional as F
 import mlflow
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datasets import load_dataset
-from model.gpt import GPTModel, count_parameters
+from data.sft import SFTDataset, collate_sft, format_prompt
+from model.gpt import GPTModel
 from model.tokenizer import GPT2Tokenizer
 from model.lora import inject_lora, mark_only_lora_as_trainable, get_lora_state_dict
-from app.inference import GPTInferenceEngine
 from training.utils import calc_loss_batch
 
 logging.basicConfig(
@@ -38,58 +36,6 @@ EVAL_PROMPTS = [
     "summarize Cinderella in one sentence"
 ]
 
-def format_alpaca(instruction: str, response: str) -> str:
-    """Matches the byte-exact Alpaca template used in app/api.py /generate."""
-    return (
-        "Below is an instruction that describes a task. "
-        "Write a response that appropriately completes the request.\n\n"
-        f"### Instruction:\n{instruction}\n\n"
-        f"### Response:\n{response}<|endoftext|>"
-    )
-
-class InstructDataset(Dataset):
-    def __init__(self, examples, tokenizer, max_length=256):
-        self.input_ids = []
-        self.target_ids = []
-        
-        for ex in examples:
-            text = format_alpaca(ex["instruction"], ex["response"])
-            token_ids = tokenizer.text_to_token_ids(text).squeeze(0)
-            
-            if token_ids.size(0) > max_length:
-                token_ids = token_ids[:max_length]
-                
-            if token_ids.size(0) > 1:
-                self.input_ids.append(token_ids[:-1])
-                self.target_ids.append(token_ids[1:])
-
-    def __len__(self):
-        return len(self.input_ids)
-
-    def __getitem__(self, idx):
-        return self.input_ids[idx], self.target_ids[idx]
-
-def collate_fn_instruct(batch, pad_token_id):
-    inputs, targets = zip(*batch)
-    max_len = max([x.size(0) for x in inputs])
-    
-    padded_inputs = []
-    padded_targets = []
-    
-    for i in range(len(inputs)):
-        inp = inputs[i]
-        tgt = targets[i]
-        pad_len = max_len - inp.size(0)
-        
-        if pad_len > 0:
-            inp = F.pad(inp, (0, pad_len), value=pad_token_id)
-            tgt = F.pad(tgt, (0, pad_len), value=-100)
-            
-        padded_inputs.append(inp)
-        padded_targets.append(tgt)
-        
-    return torch.stack(padded_inputs), torch.stack(padded_targets)
-
 def get_lr(step: int, max_steps: int, max_lr: float, min_lr: float = 1e-6) -> float:
     warmup_steps = int(0.05 * max_steps)
     if step < warmup_steps:
@@ -103,8 +49,8 @@ def evaluate_generation(model, tokenizer, device, context_size):
     model.eval()
     logger.info("--- EVALUATION ---")
     for prompt in EVAL_PROMPTS:
-        template = format_alpaca(prompt, "").replace("<|endoftext|>", "")
-        input_ids = tokenizer.text_to_token_ids(template).to(device)
+        # Encoded exactly as app/api.py serves it.
+        input_ids = torch.tensor([tokenizer.encode_ordinary(format_prompt(prompt))], device=device)
         
         with torch.no_grad():
             from model.gpt import generate
@@ -143,7 +89,7 @@ def main():
     logger.info(f"Using device: {device}")
 
     tokenizer = GPT2Tokenizer()
-    pad_id = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+    pad_id = tokenizer.eos_id
 
     checkpoint_dir = "checkpoints" if args.model_size != "tiny" else "checkpoints_tiny"
     checkpoint_path = os.path.join(checkpoint_dir, "best_model.pt")
@@ -178,10 +124,13 @@ def main():
         if pair_hash in seen:
             continue
         
-        full_text = format_alpaca(ex["instruction"], ex["response"])
-        tokens = tokenizer.encode(full_text, allowed_special={"<|endoftext|>"})
-        
-        if len(tokens) <= max_length:
+        # Keep only examples that fit whole: prompt + response + EOS, with
+        # max_length input positions after the next-token shift.
+        n_tokens = (
+            len(tokenizer.encode_ordinary(format_prompt(ex["instruction"])))
+            + len(tokenizer.encode_ordinary(ex["response"])) + 1
+        )
+        if n_tokens <= max_length + 1:
             seen.add(pair_hash)
             clean_examples.append(ex)
             
@@ -192,8 +141,10 @@ def main():
         
     logger.info(f"Dataset Stats: {len(examples)} instruction pairs")
     
-    train_ds = InstructDataset(examples, tokenizer, max_length=max_length)
-    collate = lambda b: collate_fn_instruct(b, pad_id)
+    # Prompt-masked labels: loss (train and eval) is on response tokens only,
+    # so eval_loss is not comparable with runs from before this change.
+    train_ds = SFTDataset(((ex["instruction"], ex["response"]) for ex in examples), tokenizer, max_length=max_length)
+    collate = lambda b: collate_sft(b, pad_id)
 
     if args.model_size == "medium":
         physical_batch_size = 1
@@ -208,7 +159,7 @@ def main():
         with open(eval_path, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip(): eval_examples.append(json.loads(line))
-        eval_ds = InstructDataset(eval_examples, tokenizer, max_length=max_length)
+        eval_ds = SFTDataset(((ex["instruction"], ex["response"]) for ex in eval_examples), tokenizer, max_length=max_length)
         eval_loader = DataLoader(eval_ds, batch_size=physical_batch_size, shuffle=False, collate_fn=collate)
     logger.info(f"Loading base model from {checkpoint_path}")
     gpt_cfg_dict = model_config.copy()
@@ -273,7 +224,8 @@ def main():
         "lora_r": 16,
         "lora_alpha": 32.0,
         "dataset_size": len(train_ds),
-        "model_size": args.model_size
+        "model_size": args.model_size,
+        "loss_masking": "response_only",
     })
 
     logger.info("Starting training loop...")
