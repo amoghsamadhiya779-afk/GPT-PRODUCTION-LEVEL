@@ -18,9 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python requirements
+# Install python requirements. torch is pinned to the same version as
+# requirements.txt: an unpinned CPU install resolves to the newest torch, and
+# the `torch==` pin below then pulls a second, multi-GB CUDA build from PyPI.
 COPY requirements.txt /app/
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+RUN pip install --no-cache-dir "torch==2.10.0" --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 
 # Pre-cache tiktoken vocabulary to prevent runtime download hangs

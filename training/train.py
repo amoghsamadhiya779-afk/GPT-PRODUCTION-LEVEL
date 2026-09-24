@@ -159,7 +159,7 @@ def train(
     cfg_dict = model_cfg.to_dict()
     if checkpoint_path and os.path.exists(checkpoint_path):
         logger.info("Loading starting model weights from checkpoint: %s", checkpoint_path)
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
         cfg_dict = checkpoint["model_config"]
         # Map drop_rate back to dropout for GPTConfig constructor compatibility
         gpt_cfg_dict = cfg_dict.copy()
