@@ -63,6 +63,7 @@ class GPTModel(nn.Module):
         use_cache: bool = False,
         past_key_values: list[tuple[Tensor, Tensor]] | None = None,
         slot_batch=None,
+        lora=None,
     ) -> Tensor | tuple[Tensor, list[tuple[Tensor, Tensor]]]:
         """Forward pass through the GPT model.
 
@@ -73,6 +74,8 @@ class GPTModel(nn.Module):
             slot_batch: model.kv_cache.SlotBatch for batched serving. Rows may
                 be different sequences at different positions; keys/values
                 go to the shared slot cache and only logits are returned.
+            lora: model.lora.LoRARows choosing a pooled adapter per row
+                (models with MultiLoRALinear projections; None = the pool default).
 
         Returns:
             If use_cache is False: Logits tensor of shape (batch_size, seq_len, vocab_size).
@@ -86,7 +89,7 @@ class GPTModel(nn.Module):
                 raise ValueError(f"Position exceeds the model's context length {self.cfg['context_length']}.")
             x = self.drop_emb(tok_embeds + self.pos_emb(slot_batch.positions))
             for i, block in enumerate(self.trf_blocks):
-                x, _ = block(x, slot=(slot_batch, i))
+                x, _ = block(x, slot=(slot_batch, i), lora=lora)
             return self.out_head(self.final_norm(x))
 
         # Calculate dynamic absolute position indices for positional embeddings
@@ -105,7 +108,7 @@ class GPTModel(nn.Module):
         new_past_key_values = []
         for i, block in enumerate(self.trf_blocks):
             past = past_key_values[i] if past_key_values is not None else None
-            x, present = block(x, layer_past=past, use_cache=use_cache)
+            x, present = block(x, layer_past=past, use_cache=use_cache, lora=lora)
             if use_cache:
                 new_past_key_values.append(present)
 

@@ -17,9 +17,11 @@ single-request path in model.gpt.generate_stream exactly -- same penalties,
 same min_new_tokens handling, same sliding window past the context length --
 and tests/test_batching.py checks batched output token-for-token against it.
 
-LoRA adapters are applied to the whole model, so one batch runs one adapter.
-Admission is FIFO: when the next waiting request needs a different adapter,
-no one else is admitted until the batch drains, so it can't be starved.
+LoRA adapters come from the engine's LoRAPool (model/lora.py): every row
+carries its adapter's pool index, so one batch can mix requests for different
+adapters (and the base model). Admission is FIFO; a request whose adapter
+can't get a pool entry -- all entries pinned by running requests -- waits, and
+nobody is admitted past it, so it can't be starved.
 """
 
 import logging
@@ -79,6 +81,7 @@ class GenerationHandle:
         self._ids = list(prompt_ids)  # prompt + generated; the last one isn't in the cache yet
         self._slot: int | None = None
         self._position = 0            # number of tokens stored in the slot
+        self._lora_index = 0          # LoRAPool entry (0 = no adapter)
 
     @property
     def cancelled(self) -> bool:
@@ -189,11 +192,11 @@ class ContinuousBatcher:
         admitted = []
         while self._waiting and self._free_slots:
             head = self._waiting[0]
-            batch_running = bool(self._active or admitted)
-            batch_adapter = self._active[0].adapter if self._active else (admitted[0].adapter if admitted else None)
-            if batch_running and head.adapter is not batch_adapter:
-                break  # FIFO: wait for the batch to drain, then switch adapters
+            lora_index = self.engine.lora_pool.reserve(head.adapter)
+            if lora_index is None:
+                break  # every pool entry is pinned by a running request; FIFO wait
             self._waiting.popleft()
+            head._lora_index = lora_index
             head._slot = self._free_slots.pop()
             head.admitted_at = time.perf_counter()
             head._admitted.set()  # it has a slot; generation starts at the next step
@@ -204,9 +207,11 @@ class ContinuousBatcher:
         for handle in [h for h in self._active if h.cancelled]:
             self._finish(handle, "cancelled")
 
+        # Copy in the weights of adapters reserved at admission (under the
+        # model lock, so no forward pass sees a half-written pool entry).
+        self.engine.lora_pool.load_pending()
+
         if admitted:
-            if not self._active:
-                self.engine._apply_adapter(admitted[0].adapter)
             self._active.extend(admitted)
             self.peak_batch_size = max(self.peak_batch_size, len(self._active))
             self._prefill([h for h in admitted if not h.cancelled])
@@ -243,7 +248,8 @@ class ContinuousBatcher:
                 inputs[row, : len(prompt)] = torch.tensor(prompt, device=device)
             positions = torch.arange(width, device=device).expand(len(cached), width)
             slots = torch.tensor([h._slot for h in cached], device=device)
-            logits = self.engine.model(inputs, slot_batch=self.cache.batch(slots, positions))
+            logits = self.engine.model(inputs, slot_batch=self.cache.batch(slots, positions),
+                                       lora=self._lora_rows(cached))
             last = logits[torch.arange(len(cached), device=device), lengths - 1]
             for row, handle in enumerate(cached):
                 handle._position = len(prompts[row])
@@ -263,7 +269,8 @@ class ContinuousBatcher:
             tokens = torch.tensor([[h._ids[-1]] for h in cached], device=device)
             positions = torch.tensor([[h._position] for h in cached], device=device)
             slots = torch.tensor([h._slot for h in cached], device=device)
-            logits = self.engine.model(tokens, slot_batch=self.cache.batch(slots, positions))[:, 0]
+            logits = self.engine.model(tokens, slot_batch=self.cache.batch(slots, positions),
+                                       lora=self._lora_rows(cached))[:, 0]
             for row, handle in enumerate(cached):
                 handle._position += 1
                 self._sample_and_emit(handle, logits[row])
@@ -279,7 +286,8 @@ class ContinuousBatcher:
         device = self.cache.k.device
         window = torch.tensor([handle._ids[-ctx:-1]], device=device)
         positions = torch.arange(window.shape[1], device=device)[None]
-        self.engine.model(window, slot_batch=self.cache.batch(torch.tensor([handle._slot], device=device), positions))
+        self.engine.model(window, slot_batch=self.cache.batch(torch.tensor([handle._slot], device=device), positions),
+                          lora=self._lora_rows([handle]))
         handle._position = window.shape[1]
 
     def _uncached_step(self, handle: GenerationHandle) -> None:
@@ -287,7 +295,11 @@ class ContinuousBatcher:
         the UI's KV-cache toggle still demonstrates the difference)."""
         device = next(self.engine.model.parameters()).device
         window = torch.tensor([handle._ids[-self.engine.context_size:]], device=device)
-        self._sample_and_emit(handle, self.engine.model(window)[0, -1])
+        self._sample_and_emit(handle, self.engine.model(window, lora=self._lora_rows([handle]))[0, -1])
+
+    def _lora_rows(self, handles: list[GenerationHandle]):
+        device = next(self.engine.model.parameters()).device
+        return self.engine.lora_pool.rows([h._lora_index for h in handles], device)
 
     def _sample_and_emit(self, handle: GenerationHandle, logits_row: torch.Tensor) -> None:
         if handle.cancelled:
@@ -325,4 +337,6 @@ class ContinuousBatcher:
             with self._cv:
                 self._free_slots.append(handle._slot)
             handle._slot = None
+        self.engine.lora_pool.release(handle._lora_index)
+        handle._lora_index = 0
         handle._events.put(("error", error) if error is not None else ("done", reason))

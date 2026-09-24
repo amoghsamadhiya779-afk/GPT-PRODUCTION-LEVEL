@@ -11,6 +11,14 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from model.kv_cache import SlotBatch  # noqa: F401  (type annotations)
+from model.lora import LoRARows, MultiLoRALinear
+
+
+def _project(layer: nn.Module, x: Tensor, lora: LoRARows | None) -> Tensor:
+    """Apply a projection, passing per-row adapter selection if it takes one."""
+    if lora is not None and isinstance(layer, MultiLoRALinear):
+        return layer(x, lora)
+    return layer(x)
 
 
 class MultiHeadAttention(nn.Module):
@@ -65,6 +73,7 @@ class MultiHeadAttention(nn.Module):
         layer_past: tuple[Tensor, Tensor] | None = None,
         use_cache: bool = False,
         slot: tuple["SlotBatch", int] | None = None,
+        lora: LoRARows | None = None,
     ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
         """Forward pass through multi-head causal self-attention.
 
@@ -74,6 +83,7 @@ class MultiHeadAttention(nn.Module):
             use_cache: Whether to return key/value states for caching.
             slot: (SlotBatch, layer index) for batched serving with a shared
                 slot cache (model/kv_cache.py); replaces layer_past.
+            lora: per-row LoRA adapter selection for MultiLoRALinear projections.
 
         Returns:
             Tuple of (output tensor, updated layer_past cache).
@@ -81,9 +91,9 @@ class MultiHeadAttention(nn.Module):
         b, num_tokens, d_in = x.shape
 
         # Project input to queries, keys, values — shape: (b, num_tokens, d_out)
-        keys = self.W_key(x)
-        queries = self.W_query(x)
-        values = self.W_value(x)
+        keys = _project(self.W_key, x, lora)
+        queries = _project(self.W_query, x, lora)
+        values = _project(self.W_value, x, lora)
 
         # Reshape to split into heads: (b, num_tokens, d_out) -> (b, num_tokens, num_heads, head_dim)
         keys = keys.view(b, num_tokens, self.num_heads, self.head_dim)

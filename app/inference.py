@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.adapters import AdapterRegistry
 from app.batching import ContinuousBatcher, EngineBusy, GenerationHandle, SamplingParams
 from model.gpt import GPTModel, count_parameters
-from model.lora import LORA_TARGET_MODULES, inject_lora, lora_hparams_from_checkpoint, remove_lora
+from model.lora import LORA_TARGET_MODULES, LoRAPool, inject_lora, install_multi_lora, lora_hparams_from_checkpoint
 from model.tokenizer import GPT2Tokenizer
 
 # Default for the `adapter` argument: generate with whatever adapter is
@@ -109,6 +109,15 @@ class GPTInferenceEngine:
         self.model_config = model_config
         self.model_size = model_config.get("model_size", "small")
         self.model = model.to(device=device, dtype=self.dtype).eval()
+        # Adapters are served from a shared pool rather than by rewiring the
+        # model, so one batch can mix requests for different adapters.
+        self.lora_pool = LoRAPool(
+            n_layers=model_config["n_layers"], emb_dim=model_config["emb_dim"],
+            # At least 2: the default adapter pins one entry, and a pool with no
+            # other entry could never admit a request for a different adapter.
+            max_adapters=max(2, int(os.environ.get("ENGINE_MAX_ADAPTERS", 8))), device=device, dtype=self.dtype,
+        )
+        install_multi_lora(self.model, self.lora_pool)
         self.tokenizer = GPT2Tokenizer()
         self.eos_id = self.tokenizer.eos_id
         self.context_size = self.model.pos_emb.weight.shape[0]
@@ -159,33 +168,15 @@ class GPTInferenceEngine:
         return self._active_adapter.name if self._active_adapter is not None else None
 
     def set_adapter(self, adapter) -> None:
-        """Apply a validated adapter (app.adapters.Adapter), or None for the base model.
+        """Make `adapter` (app.adapters.Adapter, or None for the base model) the default.
 
-        This changes the model for requests that don't choose an adapter; to
-        use an adapter for one request only, pass it to generate()/submit().
+        The default applies to requests submitted without an explicit adapter
+        and to direct forward passes (e.g. the eval harness). To use an
+        adapter for one request only, pass it to generate()/submit().
         """
         with self.model_lock:
-            self._apply_adapter(adapter)
-
-    def _apply_adapter(self, adapter) -> None:
-        """Swap adapters in place. Caller holds model_lock (the scheduler does)."""
-        if adapter is self._active_adapter:
-            return
-        # Always unwrap first: adapters can have different ranks (r=16 SFT vs
-        # r=4 Teach Mode), and load_state_dict raises on a shape mismatch.
-        remove_lora(self.model)
-        self._active_adapter = None
-        if adapter is not None:
-            try:
-                inject_lora(self.model, r=adapter.r, alpha=adapter.alpha, target_modules=LORA_TARGET_MODULES)
-                # Freshly created LoRA params start on CPU in fp32.
-                self.model.to(device=self.device, dtype=self.dtype)
-                self.model.load_state_dict(adapter.state_dict, strict=False)
-            except Exception:
-                remove_lora(self.model)  # all-or-nothing: never leave half-wired layers
-                raise
+            self.lora_pool.set_default(adapter)
             self._active_adapter = adapter
-        self.model.eval()
 
     # ── Generation ────────────────────────────────────────────────────
 

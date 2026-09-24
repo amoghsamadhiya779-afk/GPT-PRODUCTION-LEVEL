@@ -401,12 +401,16 @@ class TestLoRA:
             # 3. Instantiate inference engine and load
             engine = GPTInferenceEngine(checkpoint_path=temp_file_path, device="cpu")
             
-            # 4. Verify model has LoRA layers
-            from model.lora import LoRALinear
-            assert isinstance(engine.model.trf_blocks[0].att.W_query, LoRALinear)
-            
+            # 4. Verify model has LoRA layers. Serving wraps every projection in
+            # a MultiLoRALinear (per-request adapters), so the checkpoint's own
+            # LoRA layer sits one level down.
+            from model.lora import LoRALinear, MultiLoRALinear
+            w_query = engine.model.trf_blocks[0].att.W_query
+            assert isinstance(w_query, MultiLoRALinear)
+            assert isinstance(w_query.linear, LoRALinear)
+
             # 5. Verify the loaded values
-            loaded_param = engine.model.trf_blocks[0].att.W_query.lora_A
+            loaded_param = w_query.linear.lora_A
             assert torch.allclose(loaded_param, torch.full_like(loaded_param, 0.42))
             
             # 6. Verify fallback inference behavior when lora_r and lora_alpha are not saved
@@ -421,10 +425,11 @@ class TestLoRA:
             try:
                 torch.save(checkpoint_no_meta, temp_file_path2)
                 engine2 = GPTInferenceEngine(checkpoint_path=temp_file_path2, device="cpu")
-                assert isinstance(engine2.model.trf_blocks[0].att.W_query, LoRALinear)
+                baked = engine2.model.trf_blocks[0].att.W_query.linear
+                assert isinstance(baked, LoRALinear)
                 # Should have inferred r=4 and alpha=8.0
-                assert engine2.model.trf_blocks[0].att.W_query.r == 4
-                assert engine2.model.trf_blocks[0].att.W_query.alpha == 8.0
+                assert baked.r == 4
+                assert baked.alpha == 8.0
             finally:
                 if os.path.exists(temp_file_path2):
                     os.remove(temp_file_path2)
