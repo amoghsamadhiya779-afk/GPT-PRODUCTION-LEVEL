@@ -22,14 +22,10 @@ def main() -> None:
     print("  GPT-2 Pretrained Weights Loader")
     print("=" * 60 + "\n")
 
-    # 1. Install transformers if not present
-    try:
-        from transformers import GPT2LMHeadModel
-    except ImportError:
-        print("  [INFO] Installing 'transformers' library...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "transformers", "--quiet"])
-        from transformers import GPT2LMHeadModel
+    # 1. transformers is a pinned dependency (requirements.txt). Never
+    # pip-install at runtime: that pulls an unpinned, unverified package into
+    # a running server process.
+    from transformers import GPT2LMHeadModel
 
     model_size = os.environ.get("MODEL_SIZE", "small").lower()
     
@@ -62,8 +58,14 @@ def main() -> None:
     # Set model size on config for later serialization/inference
     cfg.model_size = model_size
 
-    # 2. Download official weights
-    hf_model = GPT2LMHeadModel.from_pretrained(hf_model_name)
+    # 2. Download official weights. use_safetensors=True refuses the legacy
+    # pickle-based .bin format, which can execute code when loaded. Set
+    # HF_MODEL_REVISION to a commit hash to pin exactly which upload is used.
+    hf_model = GPT2LMHeadModel.from_pretrained(
+        hf_model_name,
+        revision=os.environ.get("HF_MODEL_REVISION") or "main",
+        use_safetensors=True,
+    )
     hf_sd = hf_model.state_dict()
 
     # 4. Initialize our model and get state dict

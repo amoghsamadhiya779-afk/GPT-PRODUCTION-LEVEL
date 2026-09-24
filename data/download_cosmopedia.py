@@ -7,7 +7,6 @@ khanacademy, openstax) and merges them into a single text corpus file.
 
 import os
 import sys
-import subprocess
 
 
 def ensure_dependencies():
@@ -16,13 +15,9 @@ def ensure_dependencies():
         import datasets
         import pyarrow
     except ImportError:
-        print("Hugging Face datasets/pyarrow not found. Installing via pip...")
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "datasets", "pyarrow"])
-            print("Successfully installed datasets and pyarrow.")
-        except Exception as e:
-            print(f"Error installing dependencies: {e}")
-            sys.exit(1)
+        # Don't pip-install on the fly: use the pinned dev requirements.
+        print("Hugging Face datasets/pyarrow not found. Run: pip install -r requirements-dev.txt")
+        sys.exit(1)
 
 
 def main():

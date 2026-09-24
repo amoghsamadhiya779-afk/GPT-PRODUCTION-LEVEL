@@ -8,3 +8,11 @@ logs/
 logs_tiny/
 mlruns/
 __pycache__/
+
+# Secrets and collected user data must never be baked into an image.
+.env
+.env.*
+!.env.example
+data/feedback.jsonl
+mlflow.db
+tests/
