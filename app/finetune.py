@@ -24,7 +24,7 @@ class FinetuneJobError(Exception):
     """A failure whose message is safe to show to the client."""
 
 
-def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lock: threading.Lock, engine_gate=None):
+def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lock: threading.Lock, model_lock=None):
     """Background thread to fine-tune the model using LoRA."""
     try:
         logger.info(f"Starting LoRA fine-tuning job for adapter: {req.adapter_name}")
@@ -32,21 +32,21 @@ def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lo
         device = base_engine.device
 
         model = GPTModel(base_engine.model_config)
-        # Snapshot the base weights while holding the engine gate: requests
-        # swap LoRA wrappers in and out of base_engine.model, and reading its
-        # state_dict mid-swap would copy a half-rewired module tree.
+        # Snapshot the base weights while holding the model lock: the batching
+        # scheduler swaps LoRA wrappers in and out of base_engine.model, and
+        # reading its state_dict mid-swap would copy a half-rewired module tree.
         # base_engine.model may have an adapter applied, whose weights are
         # saved under wrapped key names (`...W_query.linear.weight`);
         # strip_lora_wrapper_keys maps those back so the base weights actually
         # load instead of silently staying at random init under strict=False.
-        if engine_gate is not None and not engine_gate.acquire(timeout=120.0):
+        if model_lock is not None and not model_lock.acquire(timeout=120.0):
             raise FinetuneJobError("The model was busy for too long; please retry.")
         try:
             base_state = strip_lora_wrapper_keys(base_engine.model.state_dict())
             missing, unexpected = model.load_state_dict(base_state, strict=False)
         finally:
-            if engine_gate is not None:
-                engine_gate.release()
+            if model_lock is not None:
+                model_lock.release()
         if missing:
             raise RuntimeError(f"Fine-tune base model load left params unmatched: {missing}")
 

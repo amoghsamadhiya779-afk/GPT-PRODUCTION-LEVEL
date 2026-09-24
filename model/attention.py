@@ -10,6 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from model.kv_cache import SlotBatch  # noqa: F401  (type annotations)
+
 
 class MultiHeadAttention(nn.Module):
     """Multi-Head Causal Self-Attention.
@@ -62,6 +64,7 @@ class MultiHeadAttention(nn.Module):
         x: Tensor,
         layer_past: tuple[Tensor, Tensor] | None = None,
         use_cache: bool = False,
+        slot: tuple["SlotBatch", int] | None = None,
     ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
         """Forward pass through multi-head causal self-attention.
 
@@ -69,6 +72,8 @@ class MultiHeadAttention(nn.Module):
             x: Input tensor of shape (batch_size, num_tokens, d_in).
             layer_past: Optional tuple of (past_keys, past_values) from previous steps.
             use_cache: Whether to return key/value states for caching.
+            slot: (SlotBatch, layer index) for batched serving with a shared
+                slot cache (model/kv_cache.py); replaces layer_past.
 
         Returns:
             Tuple of (output tensor, updated layer_past cache).
@@ -89,6 +94,17 @@ class MultiHeadAttention(nn.Module):
         keys = keys.transpose(1, 2)
         queries = queries.transpose(1, 2)
         values = values.transpose(1, 2)
+
+        if slot is not None:
+            # Batched serving: rows are different sequences at different
+            # positions, each attending to its own slot of the shared cache.
+            slot_batch, layer = slot
+            keys, values = slot_batch.update(layer, keys, values)
+            context_vec = F.scaled_dot_product_attention(
+                queries, keys, values, attn_mask=slot_batch.attn_mask, dropout_p=0.0,
+            )
+            context_vec = context_vec.transpose(1, 2).contiguous().view(b, num_tokens, self.d_out)
+            return self.out_proj(context_vec), None
 
         # Concatenate with past key/value states if present
         if layer_past is not None:
