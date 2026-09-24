@@ -6,6 +6,7 @@ Supports custom themes, moving starfield backgrounds, glassmorphic panels, and
 custom widget overrides. Connects to the FastAPI backend or falls back to local CPU serving.
 """
 
+import html
 import os
 import sys
 import time
@@ -52,48 +53,18 @@ def get_standalone_engine():
         except Exception:
             pass
             
-    # Fallback to dummy model configuration if no checkpoint exists
+    # Fallback to a randomly initialized placeholder model if no checkpoint exists
     try:
-        from model.gpt import GPTModel, count_parameters
-        from model.tokenizer import GPT2Tokenizer
-        
-        class DummyEngine:
-            def __init__(self):
-                dummy_cfg = {
-                    "vocab_size": 50257,
-                    "context_length": 256,
-                    "emb_dim": 64,
-                    "n_heads": 2,
-                    "n_layers": 1,
-                    "drop_rate": 0.0,
-                    "qkv_bias": False,
-                }
-                self.device = "cpu"
-                self.model = GPTModel(dummy_cfg).eval()
-                self.tokenizer = GPT2Tokenizer()
-                self.context_size = 256
-                self.parameter_count = count_parameters(self.model)
-                
-            def generate(self, prompt, max_new_tokens=50, temperature=0.8, top_k=50, use_cache=True):
-                input_ids = self.tokenizer.text_to_token_ids(prompt)
-                import time
-                start = time.perf_counter()
-                from model.gpt import generate as gpt_gen
-                output_ids = gpt_gen(
-                    self.model, input_ids, max_new_tokens, self.context_size,
-                    temperature, top_k, use_cache=use_cache
-                )
-                latency = time.perf_counter() - start
-                generated_text = self.tokenizer.token_ids_to_text(output_ids)
-                num_gen = output_ids.shape[1] - input_ids.shape[1]
-                return {
-                    "prompt": prompt,
-                    "generated_text": generated_text + " [Fallback Dummy Model]",
-                    "tokens_generated": num_gen,
-                    "time_taken_seconds": latency,
-                    "tokens_per_second": num_gen / latency if latency > 0 else 0.0
-                }
-        return DummyEngine()
+        return GPTInferenceEngine.from_config({
+            "vocab_size": 50257,
+            "context_length": 256,
+            "emb_dim": 64,
+            "n_heads": 2,
+            "n_layers": 1,
+            "drop_rate": 0.0,
+            "qkv_bias": False,
+            "model_size": "tiny",
+        }, device="cpu")
     except Exception:
         return None
 
@@ -457,7 +428,8 @@ st.sidebar.markdown(
 )
 
 if app_mode == "api":
-    checkpoint_name = os.path.basename(model_metadata.get('checkpoint', 'None'))
+    checkpoint_full = html.escape(str(model_metadata.get('checkpoint', 'None')))
+    checkpoint_name = html.escape(os.path.basename(str(model_metadata.get('checkpoint', 'None'))))
     if "checkpoint_tiny" in model_metadata.get('checkpoint', ''):
         model_type_label = "Tiny (Gibberish Output)"
     else:
@@ -468,9 +440,9 @@ if app_mode == "api":
         <div style="padding: 12px; border-radius: 8px; border: 1px solid var(--border-primary); background: rgba(0,0,0,0.1); font-size: 13px; line-height: 1.6; color: var(--text-secondary);">
             <div>Serving status: <strong style="color: #10b981;">🟢 Connected</strong></div>
             <div>Model Type: <strong style="color: var(--text-primary);">{model_type_label}</strong></div>
-            <div>Device: <strong>{model_metadata.get('device', 'cpu').upper()}</strong></div>
+            <div>Device: <strong>{html.escape(str(model_metadata.get('device', 'cpu')).upper())}</strong></div>
             <div>Parameters: <strong>{model_metadata.get('parameters', 0):,}</strong></div>
-            <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Checkpoint: <strong title="{model_metadata.get('checkpoint', 'None')}">{checkpoint_name}</strong></div>
+            <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Checkpoint: <strong title="{checkpoint_full}">{checkpoint_name}</strong></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -604,9 +576,14 @@ if active_view == "generate":
                                 unsafe_allow_html=True,
                             )
 
-                            # Text display
+                            # Text display. Escaped: the text is the user's prompt
+                            # plus model output, and rendering it as raw HTML let
+                            # e.g. <img src=x onerror=...> execute in the page.
+                            output_text = html.escape(results["generated_text"])
+                            if app_mode != "api":
+                                output_text += " [Fallback Placeholder Model]"
                             st.markdown(
-                                f'<div class="output-card">{results["generated_text"]}</div>',
+                                f'<div class="output-card">{output_text}</div>',
                                 unsafe_allow_html=True,
                             )
 
@@ -680,7 +657,7 @@ elif active_view == "analytics":
             plot_loaded = False
             if app_mode == "api":
                 try:
-                    plot_res = requests.get(f"{BACKEND_URL}/training/plot", stream=True)
+                    plot_res = requests.get(f"{BACKEND_URL}/training/plot", stream=True, timeout=10)
                     if plot_res.status_code == 200:
                         img = Image.open(plot_res.raw)
                         st.image(img, use_container_width=True)
@@ -841,7 +818,7 @@ elif active_view == "settings":
                     Active Serving Endpoint URL
                 </div>
                 <div style="font-size: 13px; font-family: monospace; padding: 12px; border-radius: 6px; background: rgba(0,0,0,0.2); border: 1px solid var(--border-primary); display: inline-block; color: var(--text-secondary);">
-                    BACKEND_URL: """ + BACKEND_URL + """
+                    BACKEND_URL: """ + html.escape(BACKEND_URL) + """
                 </div>
                 <div style="margin-top: 12px; font-size: 12px; color: var(--text-muted);">
                     Modify the BACKEND_URL environment variable to repoint the Streamlit dashboard to a different remote FastAPI server.

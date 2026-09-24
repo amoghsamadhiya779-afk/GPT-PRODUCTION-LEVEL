@@ -16,19 +16,29 @@ import os
 import time
 import json
 import threading
+from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 
-# TTL Cache configuration
+# TTL Cache configuration. Bounded: every distinct prompt is a distinct key,
+# so an unbounded dict grows without limit on a public endpoint.
 CACHE_TTL_SECONDS = 15 * 60  # 15 minutes
-_search_cache = {}
+CACHE_MAX_ENTRIES = 256
+_search_cache: OrderedDict = OrderedDict()
 _cache_lock = threading.Lock()
+
+# Search queries are derived from user prompts (up to 4000 chars); providers
+# don't need more than this, and there's no reason to ship whole prompts out.
+MAX_QUERY_CHARS = 256
+MAX_TITLE_CHARS = 300
+MAX_SNIPPET_CHARS = 1000
 
 def _get_from_cache(query: str):
     with _cache_lock:
         if query in _search_cache:
             entry = _search_cache[query]
             if time.time() - entry['timestamp'] < CACHE_TTL_SECONDS:
+                _search_cache.move_to_end(query)
                 return entry['results']
             else:
                 del _search_cache[query]
@@ -42,6 +52,31 @@ def _set_in_cache(query: str, results: list[dict]):
             'timestamp': time.time(),
             'results': results
         }
+        _search_cache.move_to_end(query)
+        while len(_search_cache) > CACHE_MAX_ENTRIES:
+            _search_cache.popitem(last=False)
+
+
+def sanitize_link(href: str) -> str:
+    """Return an absolute http(s) URL, or "" if `href` isn't one.
+
+    Result links come from third parties and end up in the UI's <a href>, so
+    anything else (javascript:, data:, ...) must never get through. Also
+    unwraps DuckDuckGo's redirect links (//duckduckgo.com/l/?uddg=<target>).
+    """
+    href = (href or "").strip()
+    if href.startswith("//"):
+        href = "https:" + href
+    try:
+        parsed = urllib.parse.urlparse(href)
+        if parsed.netloc.endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
+            target = urllib.parse.parse_qs(parsed.query).get("uddg", [""])[0]
+            return sanitize_link(target) if target else ""  # target is shorter, so this terminates
+    except ValueError:
+        return ""
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return ""
+    return href
 
 def serper_search(query: str, max_results: int = 3) -> list[dict]:
     """Search using Serper.dev API."""
@@ -147,14 +182,8 @@ def duckduckgo_search(query: str, max_results: int = 3) -> list[dict]:
             snippet = re.sub(r'<[^>]+>', '', raw_snippet)
             snippet = html.unescape(snippet).strip()
             
-            link = raw_url
-            if "//uddg=" in link:
-                try:
-                    query_part = link.split("//uddg=")[-1]
-                    link = urllib.parse.unquote(query_part)
-                except Exception:
-                    pass
-            
+            link = html.unescape(raw_url)
+
             if title and snippet:
                 results.append({
                     "title": title,
@@ -181,10 +210,10 @@ def clean_and_rank_results(query: str, results: list, max_results: int = 3) -> l
     cleaned = []
     for r in results:
         snip = re.sub(r'(?:\.{3,}|…)', '', r['snippet'])
-        snip = re.sub(r'\s+', ' ', snip).strip()
+        snip = re.sub(r'\s+', ' ', snip).strip()[:MAX_SNIPPET_CHARS]
         
-        title = re.sub(r'\s+', ' ', r['title']).strip()
-        link = r['link']
+        title = re.sub(r'\s+', ' ', r['title']).strip()[:MAX_TITLE_CHARS]
+        link = sanitize_link(r['link'])
         
         snip_words = set(re.findall(r'\w+', snip.lower()))
         overlap = len(query_words.intersection(snip_words))
@@ -216,12 +245,16 @@ def clean_and_rank_results(query: str, results: list, max_results: int = 3) -> l
 
 def web_search(query: str, max_results: int = 3) -> list[dict]:
     """Retrieve search results using Serper -> DDG fallback with caching."""
+    query = re.sub(r'\s+', ' ', query).strip()[:MAX_QUERY_CHARS]
+    if not query:
+        return []
     cached = _get_from_cache(query)
     if cached is not None:
-        logger.info("Returning cached web search results for: '%s'", query)
+        logger.info("Returning cached web search results (query_len=%d)", len(query))
         return cached
 
-    logger.info("Performing web search query: '%s'", query)
+    # Log the length, not the text: queries are user prompts and may be sensitive.
+    logger.info("Performing web search (query_len=%d)", len(query))
     
     results = []
     # Try Serper first

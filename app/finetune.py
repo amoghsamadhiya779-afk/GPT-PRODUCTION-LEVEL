@@ -2,17 +2,20 @@
 import logging
 import os
 import time
-import copy
 import threading
 
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
+from app.adapters import ADAPTERS_DIR, adapter_path
 from app.schemas import FinetuneRequest
 from model.gpt import GPTModel
-from model.lora import inject_lora, mark_only_lora_as_trainable, get_lora_state_dict, strip_lora_wrapper_keys
+from model.lora import LORA_TARGET_MODULES, inject_lora, mark_only_lora_as_trainable, get_lora_state_dict, strip_lora_wrapper_keys
 from model.tokenizer import GPT2Tokenizer
+
+TEACH_LORA_R = 4
+TEACH_LORA_ALPHA = 8.0
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +29,11 @@ class AlpacaDataset(Dataset):
                 "Below is an instruction that describes a task. "
                 "Write a response that appropriately completes the request.\n\n"
                 f"### Instruction:\n{ex.instruction}\n\n"
-                f"### Response:\n{ex.response}<|endoftext|>"
+                f"### Response:\n{ex.response}"
             )
-            token_ids = tokenizer.text_to_token_ids(text).squeeze(0)
+            # User-supplied text: "<|endoftext|>" inside it stays plain text;
+            # only the terminator we append is the real EOS token.
+            token_ids = torch.tensor(tokenizer.encode_ordinary(text) + [tokenizer.eos_id])
             
             if token_ids.size(0) > max_length:
                 token_ids = token_ids[:max_length]
@@ -67,7 +72,11 @@ def collate_fn(batch, pad_token_id=50256):
     return torch.stack(padded_inputs), torch.stack(padded_targets)
 
 
-def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lock: threading.Lock):
+class FinetuneJobError(Exception):
+    """A failure whose message is safe to show to the client."""
+
+
+def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lock: threading.Lock, engine_gate=None):
     """Background thread to fine-tune the model using LoRA."""
     try:
         logger.info(f"Starting LoRA fine-tuning job for adapter: {req.adapter_name}")
@@ -75,26 +84,34 @@ def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lo
         device = base_engine.device
 
         model = GPTModel(base_engine.model_config)
-        # base_engine.model may currently have LoRA layers injected (e.g. an
-        # active persona/adapter), whose weights are saved under wrapped key
-        # names (`...W_query.linear.weight`). strip_lora_wrapper_keys maps
-        # those back to plain names so the base weights actually load instead
-        # of silently staying at random init under strict=False.
-        base_state = strip_lora_wrapper_keys(base_engine.model.state_dict())
-        missing, unexpected = model.load_state_dict(base_state, strict=False)
+        # Snapshot the base weights while holding the engine gate: requests
+        # swap LoRA wrappers in and out of base_engine.model, and reading its
+        # state_dict mid-swap would copy a half-rewired module tree.
+        # base_engine.model may have an adapter applied, whose weights are
+        # saved under wrapped key names (`...W_query.linear.weight`);
+        # strip_lora_wrapper_keys maps those back so the base weights actually
+        # load instead of silently staying at random init under strict=False.
+        if engine_gate is not None and not engine_gate.acquire(timeout=120.0):
+            raise FinetuneJobError("The model was busy for too long; please retry.")
+        try:
+            base_state = strip_lora_wrapper_keys(base_engine.model.state_dict())
+            missing, unexpected = model.load_state_dict(base_state, strict=False)
+        finally:
+            if engine_gate is not None:
+                engine_gate.release()
         if missing:
-            logger.warning(f"Fine-tune base model load left params unmatched (random init): {missing}")
-        model.to(device)
-        
-        inject_lora(model, r=4, alpha=8.0, target_modules=["W_query", "W_value"])
+            raise RuntimeError(f"Fine-tune base model load left params unmatched: {missing}")
+
+        inject_lora(model, r=TEACH_LORA_R, alpha=TEACH_LORA_ALPHA, target_modules=LORA_TARGET_MODULES)
         mark_only_lora_as_trainable(model)
-        
+        model.to(device)
+
         tokenizer = GPT2Tokenizer()
-        pad_id = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+        pad_id = tokenizer.eos_id
         dataset = AlpacaDataset(req.examples, tokenizer, max_length=base_engine.model_config["context_length"])
         
         if len(dataset) == 0:
-            raise ValueError("All examples were empty or invalid.")
+            raise FinetuneJobError("All examples were empty or invalid.")
             
         dataloader = DataLoader(
             dataset, 
@@ -151,25 +168,43 @@ def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lo
                     job_state["current_loss"] = loss.item()
                     job_state["eta_seconds"] = eta
                     
-        os.makedirs("checkpoints/adapters", exist_ok=True)
-        adapter_path = os.path.join("checkpoints", "adapters", f"{req.adapter_name}.pt")
-        
         checkpoint = {
             "model_config": base_engine.model_config,
-            "model_state_dict": get_lora_state_dict(model),
+            "model_state_dict": {k: v.detach().cpu() for k, v in get_lora_state_dict(model).items()},
             "is_lora": True,
-            "lora_r": 4,
-            "lora_alpha": 8.0,
+            "lora_r": TEACH_LORA_R,
+            "lora_alpha": TEACH_LORA_ALPHA,
         }
-        torch.save(checkpoint, adapter_path)
-        
+        final_path = adapter_path(req.adapter_name)
+        os.makedirs(ADAPTERS_DIR, exist_ok=True)
+        # Write to a temp file and rename into place, so a crash or a
+        # concurrent reader never sees a truncated adapter. Refuse to replace
+        # an existing adapter -- the endpoint checks too, but only this check
+        # runs after training, right before the write.
+        tmp_path = f"{final_path}.{job_state['id']}.tmp"
+        torch.save(checkpoint, tmp_path)
+        try:
+            with lock:
+                if os.path.exists(final_path):
+                    raise FinetuneJobError("An adapter with that name already exists.")
+                os.replace(tmp_path, final_path)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
         with lock:
             job_state["status"] = "done"
             job_state["eta_seconds"] = 0.0
-            
-        logger.info(f"Successfully finished finetuning and saved adapter to {adapter_path}")
-        
-    except Exception as e:
-        logger.error(f"Finetuning job failed: {e}")
+
+        logger.info(f"Successfully finished finetuning and saved adapter to {final_path}")
+
+    except FinetuneJobError as e:
+        logger.warning(f"Finetuning job {job_state.get('id')} rejected: {e}")
         with lock:
             job_state["status"] = "failed"
+            job_state["error"] = str(e)
+    except Exception:
+        logger.exception(f"Finetuning job {job_state.get('id')} failed")
+        with lock:
+            job_state["status"] = "failed"
+            job_state["error"] = "Training failed due to a server error."

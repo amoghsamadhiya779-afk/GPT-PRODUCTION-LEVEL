@@ -2,16 +2,8 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-# Set TESTING env var before importing app to disable slowapi and other side effects
-os.environ["TESTING"] = "1"
-
-# Monkeypatch the background weight loader to prevent it from doing any work during tests
-import training.load_pretrained
-def mock_main():
-    pass
-training.load_pretrained.main = mock_main
-
-# Now it is safe to import the app
+# tests/conftest.py disables rate limiting and the background weight
+# download before this import.
 from app.api import app
 
 @pytest.fixture
@@ -36,7 +28,18 @@ def test_cors_headers(client):
     assert response.status_code == 200
     assert "access-control-allow-origin" in response.headers
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
-    assert response.headers.get("access-control-allow-credentials") == "true"
+    # No cookies/HTTP auth are used cross-origin, so credentials must stay off.
+    assert "access-control-allow-credentials" not in response.headers
+
+def test_cors_rejects_unknown_origin(client):
+    response = client.options(
+        "/generate",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "POST",
+        }
+    )
+    assert "access-control-allow-origin" not in response.headers
 
 def test_health_endpoint(client):
     response = client.get("/health")
@@ -228,7 +231,7 @@ def test_generate_stream_equivalence(client):
             except:
                 pass
 
-def test_finetune_and_adapters(client):
+def test_finetune_and_adapters(client, monkeypatch):
     import time
 
     adapter_path = os.path.join("checkpoints", "adapters", "test_adapter_1.pt")
@@ -244,7 +247,7 @@ def test_finetune_and_adapters(client):
         assert resp.status_code == 200
         job_id = resp.json()["job_id"]
 
-        # Check 409 conflict
+        # Check 409 conflict (job still running, or the adapter now exists)
         resp_conflict = client.post("/finetune", json=payload)
         assert resp_conflict.status_code == 409
 
@@ -265,24 +268,58 @@ def test_finetune_and_adapters(client):
         assert resp_adapters.status_code == 200
         assert "test_adapter_1" in resp_adapters.json()["adapters"]
 
-        # 3. Activate adapter
-        resp_activate = client.post("/adapters/test_adapter_1/activate")
+        # 3. Teach Mode can never overwrite an existing adapter
+        resp_overwrite = client.post("/finetune", json=payload)
+        assert resp_overwrite.status_code == 409
+
+        gen = {"prompt": "hello", "max_new_tokens": 3, "min_new_tokens": 0, "temperature": 0.0}
+
+        # 4. Adapters are selected per request and never leak into other requests
+        resp_gen = client.post("/generate", json={**gen, "adapter": "test_adapter_1"})
+        assert resp_gen.status_code == 200
+        assert resp_gen.json()["adapter"] == "test_adapter_1"
+        resp_gen = client.post("/generate", json=gen)
+        assert resp_gen.status_code == 200
+        assert resp_gen.json()["adapter"] is None
+        assert client.post("/generate", json={**gen, "adapter": "does_not_exist"}).status_code == 404
+
+        # 5. Changing the server-wide default is admin-only
+        assert client.post("/adapters/test_adapter_1/activate").status_code == 403
+        monkeypatch.setenv("ADMIN_API_KEY", "s3cret")
+        assert client.post("/adapters/test_adapter_1/activate").status_code == 401
+        admin = {"Authorization": "Bearer s3cret"}
+        resp_activate = client.post("/adapters/test_adapter_1/activate", headers=admin)
         assert resp_activate.status_code == 200
         assert resp_activate.json()["status"] == "success"
+        assert client.post("/generate", json=gen).json()["adapter"] == "test_adapter_1"
+        assert client.post("/generate", json={**gen, "adapter": "none"}).json()["adapter"] is None
 
-        # 4. Deactivate adapter
-        resp_deactivate = client.post("/adapters/deactivate")
+        # 6. Deactivate the server default
+        resp_deactivate = client.post("/adapters/deactivate", headers=admin)
         assert resp_deactivate.status_code == 200
         assert resp_deactivate.json()["status"] == "success"
+        assert client.post("/generate", json=gen).json()["adapter"] is None
     finally:
+        app.state.default_adapter = None
         # This test writes a real checkpoint file to checkpoints/adapters/ --
         # clean it up so repeated runs don't leave stray artifacts in the
         # working tree.
         if os.path.exists(adapter_path):
             os.remove(adapter_path)
 
-def test_feedback_persistence(client):
-    import os
+def test_finetune_refuses_reserved_adapter_names(client):
+    payload = {
+        "examples": [{"instruction": "x", "response": "y"}],
+        "steps": 1,
+    }
+    # The shipped SFT adapters (loaded via DEFAULT_ADAPTER) must not be overwritable.
+    for name in ["sft_v1_small", "sft_v1_medium", "none", "default"]:
+        resp = client.post("/finetune", json={**payload, "adapter_name": name})
+        assert resp.status_code == 403, name
+    resp = client.post("/finetune", json={**payload, "adapter_name": "../../app/api"})
+    assert resp.status_code == 422
+
+def test_feedback_persistence(client, monkeypatch):
     
     # Submit feedback
     payload = {
@@ -293,9 +330,13 @@ def test_feedback_persistence(client):
     }
     resp = client.post("/feedback", json=payload)
     assert resp.status_code == 200
-    
-    # Get feedback
-    resp_get = client.get("/feedback")
+
+    # Reading feedback (other users' prompts/answers) is admin-only
+    assert client.get("/feedback").status_code == 403
+    monkeypatch.setenv("ADMIN_API_KEY", "s3cret")
+    assert client.get("/feedback", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+    resp_get = client.get("/feedback", headers={"Authorization": "Bearer s3cret"})
     assert resp_get.status_code == 200
     data = resp_get.json()["feedback"]
     assert len(data) > 0
@@ -320,7 +361,8 @@ def test_safety_net_trigger(client, monkeypatch):
     def mock_generate(*args, **kwargs):
         return {
             "prompt": kwargs.get("prompt", ""),
-            "generated_text": "I love eating chocolate cake and ice cream.",
+            "generated_text": kwargs.get("prompt", "") + "I love eating chocolate cake and ice cream.",
+            "completion_text": "I love eating chocolate cake and ice cream.",
             "tokens_generated": 10,
             "time_taken_seconds": 0.1,
             "tokens_per_second": 100.0
@@ -348,7 +390,8 @@ def test_safety_net_silent(client, monkeypatch):
     def mock_generate(*args, **kwargs):
         return {
             "prompt": kwargs.get("prompt", ""),
-            "generated_text": "Mars is the fourth planet. It is a desert world.",
+            "generated_text": kwargs.get("prompt", "") + "Mars is the fourth planet. It is a desert world.",
+            "completion_text": "Mars is the fourth planet. It is a desert world.",
             "tokens_generated": 10,
             "time_taken_seconds": 0.1,
             "tokens_per_second": 100.0
