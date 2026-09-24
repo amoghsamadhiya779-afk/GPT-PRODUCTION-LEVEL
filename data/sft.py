@@ -6,11 +6,13 @@ the SFT training script (training/finetune_instruct.py), Teach Mode
 (app/finetune.py) and serving (app/api.py) so the prompt a model is trained
 on is byte-for-byte the prompt it is served with.
 
-Loss is computed on response tokens only. Supervising the prompt as well
-spends most of the training signal on predicting the fixed template and the
-user's instruction (two-thirds of all tokens in data/sft_mix.jsonl) instead
-of on answering -- and teaches the model to write instructions.
+Loss is computed on response tokens only -- the standard setup, as in the
+original Alpaca training recipe. With the prompt supervised too, two-thirds
+of all supervised tokens in data/sft_mix.jsonl are template and instruction
+text rather than answers.
 """
+
+from collections.abc import Sequence
 
 import torch
 from torch import Tensor
@@ -26,18 +28,35 @@ PROMPT_HEADER = (
 )
 
 
-def format_prompt(instruction: str) -> str:
-    """The prompt the model sees; the response follows it directly."""
-    return f"{PROMPT_HEADER}{instruction}\n\n### Response:\n"
+def format_prompt(instruction: str, history: Sequence[tuple[str, str]] = ()) -> str:
+    """The prompt the model sees; the response follows it directly.
+
+    Earlier conversation turns, given as (user, assistant) pairs oldest
+    first, are rendered as completed Instruction/Response blocks ahead of the
+    current instruction -- the same shape as few-shot Alpaca prompting, so a
+    model tuned on single-turn data reads them as context. With no history
+    the output is exactly the single-turn training template. No EOS goes
+    between turns: GPT-2 treats EOS as a document boundary, which would tell
+    the model to disregard everything before it.
+    """
+    turns = "".join(f"{user}\n\n### Response:\n{assistant}\n\n### Instruction:\n" for user, assistant in history)
+    return f"{PROMPT_HEADER}{turns}{instruction}\n\n### Response:\n"
 
 
-def encode_sft_example(tokenizer, instruction: str, response: str, max_length: int) -> tuple[list[int], list[int]] | None:
+def encode_sft_example(
+    tokenizer,
+    instruction: str,
+    response: str,
+    max_length: int,
+    history: Sequence[tuple[str, str]] = (),
+) -> tuple[list[int], list[int]] | None:
     """Encode one example as (input_ids, labels) for next-token training.
 
     The sequence is prompt + response + EOS; labels are the next token at
     each position, with every position that would predict a prompt token set
-    to IGNORE_INDEX. Returns None if truncation to `max_length` input tokens
-    leaves no response token to learn from.
+    to IGNORE_INDEX. With `history`, earlier turns are part of the prompt, so
+    only the final response is supervised. Returns None if truncation to
+    `max_length` input tokens leaves no response token to learn from.
 
     Prompt and response are tokenized separately: the prompt then encodes
     exactly as it does at inference (where it is encoded on its own and the
@@ -45,7 +64,7 @@ def encode_sft_example(tokenizer, instruction: str, response: str, max_length: i
     boundary. Both use encode_ordinary, so a literal "<|endoftext|>" in user
     data stays plain text and only the appended terminator is the real EOS.
     """
-    prompt_ids = tokenizer.encode_ordinary(format_prompt(instruction))
+    prompt_ids = tokenizer.encode_ordinary(format_prompt(instruction, history))
     sequence = (prompt_ids + tokenizer.encode_ordinary(response) + [tokenizer.eos_id])[: max_length + 1]
 
     input_ids = sequence[:-1]
@@ -59,13 +78,17 @@ def encode_sft_example(tokenizer, instruction: str, response: str, max_length: i
 
 
 class SFTDataset(Dataset):
-    """Prompt-masked instruction dataset over (instruction, response) pairs."""
+    """Prompt-masked instruction dataset.
+
+    `pairs` yields (instruction, response) or (instruction, response, history)
+    tuples, where history is a sequence of earlier (user, assistant) turns.
+    """
 
     def __init__(self, pairs, tokenizer, max_length: int = 256) -> None:
         self.input_ids: list[Tensor] = []
         self.labels: list[Tensor] = []
-        for instruction, response in pairs:
-            encoded = encode_sft_example(tokenizer, instruction, response, max_length)
+        for instruction, response, *history in pairs:
+            encoded = encode_sft_example(tokenizer, instruction, response, max_length, *history)
             if encoded is not None:
                 self.input_ids.append(torch.tensor(encoded[0]))
                 self.labels.append(torch.tensor(encoded[1]))
