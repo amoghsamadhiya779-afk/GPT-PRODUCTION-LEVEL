@@ -78,11 +78,13 @@ class GPTModel(nn.Module):
         tok_embeds = self.tok_emb(in_idx)
 
         # Calculate dynamic absolute position indices for positional embeddings
-        if past_key_values is not None:
-            prev_tokens = past_key_values[0][0].shape[-2]
-            pos_idx = torch.arange(prev_tokens, prev_tokens + seq_len, device=in_idx.device)
-        else:
-            pos_idx = torch.arange(seq_len, device=in_idx.device)
+        prev_tokens = past_key_values[0][0].shape[-2] if past_key_values is not None else 0
+        if prev_tokens + seq_len > self.cfg["context_length"]:
+            raise ValueError(
+                f"Sequence length {prev_tokens + seq_len} exceeds the model's "
+                f"context length {self.cfg['context_length']}; crop the input first."
+            )
+        pos_idx = torch.arange(prev_tokens, prev_tokens + seq_len, device=in_idx.device)
 
         pos_embeds = self.pos_emb(pos_idx)
         x = tok_embeds + pos_embeds  # (batch_size, seq_len, emb_dim)
@@ -103,6 +105,20 @@ class GPTModel(nn.Module):
         return logits
 
 
+def _banned_ngram_tokens(tokens: list[int], n: int) -> set[int]:
+    """Tokens that would complete an n-gram already present in `tokens`."""
+    if n <= 0 or len(tokens) < n - 1:
+        return set()
+    if n == 1:
+        return set(tokens)
+    ctx = tuple(tokens[len(tokens) - (n - 1):])
+    return {
+        tokens[i + n - 1]
+        for i in range(len(tokens) - n + 1)
+        if tuple(tokens[i:i + n - 1]) == ctx
+    }
+
+
 def _sample_next_token(
     logits: Tensor,
     temperature: float,
@@ -115,80 +131,83 @@ def _sample_next_token(
     idx: Tensor | None = None,
     prompt_len: int = 0,
 ) -> Tensor:
-    """Helper function to sample the next token from logits."""
-    # N-gram penalty applies to the whole sequence to prevent repeating any n-gram
+    """Sample the next token from logits of shape (batch, vocab_size).
+
+    Processing order matches the standard logits-processor pipeline:
+    penalties -> n-gram blocking -> temperature -> top-k -> top-p -> sample.
+    Temperature must be applied *before* top-p, otherwise the nucleus is
+    computed on a different distribution than the one actually sampled from.
+
+    Penalties and n-gram blocking only look at tokens generated after
+    `prompt_len`. Blocking n-grams from the prompt as well would forbid the
+    model from quoting its own context -- e.g. copying a phrase from the
+    retrieved web sources in grounded (RAG) generation.
+    """
+    raw_logits = logits.clone()
+
     if idx is not None:
         for b in range(logits.shape[0]):
-            if no_repeat_ngram_size > 0 and idx.shape[1] >= no_repeat_ngram_size - 1:
-                n = no_repeat_ngram_size
-                seq = idx[b]
-                if n == 1:
-                    logits[b, seq] = float('-inf')
-                else:
-                    ctx = seq[-(n-1):]
-                    for i in range(len(seq) - n + 1):
-                        if torch.equal(seq[i:i+n-1], ctx):
-                            banned_token = seq[i+n-1]
-                            logits[b, banned_token] = float('-inf')
-                            
-            # Other penalties apply ONLY to generated tokens
-            if prompt_len > 0 and idx.shape[1] > prompt_len:
-                gen_tokens = idx[b, prompt_len:]
-                
-                if repetition_penalty > 1.0:
-                    unique_tokens = torch.unique(gen_tokens)
-                    token_logits = logits[b, unique_tokens]
-                    penalized = torch.where(
-                        token_logits >= 0,
-                        token_logits / repetition_penalty,
-                        token_logits * repetition_penalty,
-                    )
-                    logits[b, unique_tokens] = penalized
-                    
-                if frequency_penalty != 0.0 or presence_penalty != 0.0:
-                    unique_tokens, counts = torch.unique(gen_tokens, return_counts=True)
-                    if presence_penalty != 0.0:
-                        logits[b, unique_tokens] -= presence_penalty
-                    if frequency_penalty != 0.0:
-                        logits[b, unique_tokens] -= frequency_penalty * counts.float().to(logits.device)
+            gen_tokens = idx[b, prompt_len:]
+            if gen_tokens.numel() == 0:
+                continue
 
-    # Top-k filtering
-    if top_k is not None:
-        top_logits, _ = torch.topk(logits, top_k)
-        min_val = top_logits[:, -1]
-        logits = torch.where(
-            logits < min_val,
-            torch.tensor(float("-inf")).to(logits.device),
-            logits,
-        )
+            if no_repeat_ngram_size > 0:
+                banned = _banned_ngram_tokens(gen_tokens.tolist(), no_repeat_ngram_size)
+                if banned:
+                    logits[b, list(banned)] = float("-inf")
 
-    # Top-p (nucleus) filtering
+            if repetition_penalty > 1.0:
+                unique_tokens = torch.unique(gen_tokens)
+                token_logits = logits[b, unique_tokens]
+                penalized = torch.where(
+                    token_logits >= 0,
+                    token_logits / repetition_penalty,
+                    token_logits * repetition_penalty,
+                )
+                logits[b, unique_tokens] = penalized
+
+            if frequency_penalty != 0.0 or presence_penalty != 0.0:
+                unique_tokens, counts = torch.unique(gen_tokens, return_counts=True)
+                if presence_penalty != 0.0:
+                    logits[b, unique_tokens] -= presence_penalty
+                if frequency_penalty != 0.0:
+                    logits[b, unique_tokens] -= frequency_penalty * counts.float().to(logits.device)
+
+    # If blocking/penalties eliminated every candidate in a row, fall back to
+    # the unconstrained logits for that row rather than sampling from NaNs.
+    dead_rows = torch.isneginf(logits).all(dim=-1)
+    if dead_rows.any():
+        logits[dead_rows] = raw_logits[dead_rows]
+
+    if temperature <= 0.0:
+        # Greedy decoding: top-k/top-p cannot change the argmax.
+        return torch.argmax(logits, dim=-1, keepdim=True)
+
+    logits = logits / temperature
+
+    # Top-k filtering (clamped so k > vocab_size can't raise)
+    if top_k is not None and top_k > 0:
+        k = min(top_k, logits.size(-1))
+        kth_value = torch.topk(logits, k, dim=-1).values[:, -1:]
+        logits = logits.masked_fill(logits < kth_value, float("-inf"))
+
+    # Top-p (nucleus) filtering on the temperature-scaled distribution
     if top_p is not None and top_p < 1.0:
         sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-        sorted_probs = torch.softmax(sorted_logits, dim=-1)
-        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
 
-        # Shift the indices to the right to keep the first token that exceeds the threshold
+        # Shift right so the first token that crosses the threshold is kept
         sorted_indices_to_remove = cumulative_probs > top_p
         sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
         sorted_indices_to_remove[..., 0] = False
 
-        # Scatter mask back to original logits shape
         indices_to_remove = sorted_indices_to_remove.scatter(
             dim=-1, index=sorted_indices, src=sorted_indices_to_remove
         )
         logits = logits.masked_fill(indices_to_remove, float("-inf"))
 
-    # Temperature scaling + sampling
-    if temperature > 0.0:
-        logits = logits / temperature
-        # Numerical stability: subtract row-wise max before softmax
-        logits = logits - logits.max(dim=-1, keepdim=True).values
-        probs = torch.softmax(logits, dim=-1)
-        idx_next = torch.multinomial(probs, num_samples=1)
-    else:
-        idx_next = torch.argmax(logits, dim=-1, keepdim=True)
-    return idx_next
+    probs = torch.softmax(logits, dim=-1)
+    return torch.multinomial(probs, num_samples=1)
 
 
 def generate_text_simple(

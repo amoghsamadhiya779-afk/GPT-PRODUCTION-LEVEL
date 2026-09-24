@@ -25,12 +25,27 @@ class GPT2Tokenizer:
     def __init__(self) -> None:
         self.encoding = tiktoken.get_encoding("gpt2")
         self.vocab_size = self.encoding.n_vocab  # 50257
+        self.eos_id = self.encoding.eot_token  # <|endoftext|> = 50256
 
     def encode(self, text: str, allowed_special: set[str] | None = None) -> list[int]:
-        """Encode text to a list of token IDs."""
+        """Encode text to a list of token IDs.
+
+        A literal "<|endoftext|>" in `text` becomes the real end-of-text
+        control token, which is what training data formatting wants. Never use
+        this for untrusted input -- use `encode_ordinary` instead.
+        """
         if allowed_special is None:
             allowed_special = {"<|endoftext|>"}
         return self.encoding.encode(text, allowed_special=allowed_special)
+
+    def encode_ordinary(self, text: str) -> list[int]:
+        """Encode text with special-token strings treated as plain text.
+
+        Use this for anything that isn't fully trusted (user prompts, web
+        snippets): otherwise a user typing "<|endoftext|>" injects a genuine
+        document-boundary token into the model's context.
+        """
+        return self.encoding.encode_ordinary(text)
 
     def decode(self, token_ids: list[int]) -> str:
         """Decode a list of token IDs back to text."""

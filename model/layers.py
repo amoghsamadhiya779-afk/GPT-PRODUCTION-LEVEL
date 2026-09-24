@@ -7,6 +7,7 @@ and the TransformerBlock — all implemented from scratch.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 from model.attention import MultiHeadAttention
@@ -16,7 +17,13 @@ class LayerNorm(nn.Module):
     """Layer Normalization with learnable scale and shift.
 
     Normalizes across the last dimension (embedding dim) with
-    learnable affine parameters, matching the GPT-2 implementation.
+    learnable affine parameters, matching the GPT-2 implementation:
+
+        y = scale * (x - mean) / sqrt(var + eps) + shift
+
+    where var is the biased (population) variance. Computed with PyTorch's
+    fused kernel, which is mathematically identical to spelling out the
+    mean/var/sqrt chain but avoids several intermediate tensors per call.
     """
 
     def __init__(self, emb_dim: int) -> None:
@@ -26,27 +33,22 @@ class LayerNorm(nn.Module):
         self.shift = nn.Parameter(torch.zeros(emb_dim))
 
     def forward(self, x: Tensor) -> Tensor:
-        mean = x.mean(dim=-1, keepdim=True)
-        var = x.var(dim=-1, keepdim=True, unbiased=False)
-        norm_x = (x - mean) / torch.sqrt(var + self.eps)
-        return self.scale * norm_x + self.shift
+        return F.layer_norm(x, (x.shape[-1],), self.scale, self.shift, self.eps)
 
 
 class GELU(nn.Module):
     """Gaussian Error Linear Unit activation (tanh approximation).
 
-    Hand-implemented using the exact formula from the GPT-2 paper:
+    Uses the exact formula from the GPT-2 paper:
         GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+    evaluated by PyTorch's fused tanh-approximation kernel.
     """
 
     def __init__(self) -> None:
         super().__init__()
 
     def forward(self, x: Tensor) -> Tensor:
-        return 0.5 * x * (1 + torch.tanh(
-            torch.sqrt(torch.tensor(2.0 / torch.pi)) *
-            (x + 0.044715 * torch.pow(x, 3))
-        ))
+        return F.gelu(x, approximate="tanh")
 
 
 class FeedForward(nn.Module):
