@@ -41,6 +41,10 @@ export interface StreamMetrics {
   tokens_generated: number;
   sources?: { title: string; snippet: string; link: string }[];
   safety_net_prefix?: string;
+  // Web-search answers: the answer with inline [n] citations (replaces the
+  // raw streamed text), and which source supports each cited sentence.
+  final_text?: string;
+  citations?: { sentence: number; source: number; support: number }[];
 }
 
 export interface HealthStatus {
@@ -142,6 +146,8 @@ export const api = {
             tokens_generated: parsed.tokens_generated,
             sources: parsed.sources,
             safety_net_prefix: parsed.safety_net_prefix,
+            final_text: parsed.final_text,
+            citations: parsed.citations,
           });
           return true;
         }

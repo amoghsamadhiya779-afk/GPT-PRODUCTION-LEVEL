@@ -15,6 +15,9 @@ behavior  Greedy generations on fixed prompts checked by rules: factual
           recall, instruction following, chitchat, multi-turn memory, RAG
           grounding on invented facts, plus hygiene on every output (template
           leakage, empty output, failure to stop, repetition).
+retrieval Ranking of web-search candidates against relevance labels (MRR,
+          precision@1, recall@3), including trap results and a keyword-stuffed
+          injection attempt. Model-free unless RAG_EMBED_MODEL is set.
 
 A report is a flat dict of metrics plus the provenance needed to decide
 whether two reports are comparable (eval-data hashes, decoding settings).
@@ -25,6 +28,7 @@ import hashlib
 import json
 import math
 import os
+import random
 import re
 import subprocess
 import time
@@ -33,7 +37,8 @@ from collections import defaultdict
 import torch
 import torch.nn.functional as F
 
-from app.prompting import build_prompt_with_budget, check_grounding_safety
+from app.citations import cite
+from app.prompting import build_prompt_with_budget
 from app.schemas import GenerationRequest
 from data.sft import IGNORE_INDEX, SFTDataset, collate_sft, format_prompt
 
@@ -44,6 +49,7 @@ DATA_FILES = {
     "heldout": os.path.join(REPO_ROOT, "data", "sft_eval.jsonl"),
     "mc": os.path.join(REPO_ROOT, "evals", "data", "multiple_choice.jsonl"),
     "behavior": os.path.join(REPO_ROOT, "evals", "data", "behavior.jsonl"),
+    "retrieval": os.path.join(REPO_ROOT, "evals", "data", "retrieval.jsonl"),
 }
 ALL_SUITES = tuple(DATA_FILES)
 
@@ -59,6 +65,7 @@ GATED_METRICS = {
     "behavior.pass_rate": ("higher", 0.05),
     "behavior.template_leak_rate": ("lower", 0.0),
     "behavior.empty_rate": ("lower", 0.0),
+    "retrieval.mrr": ("higher", 0.0),  # deterministic: any drop is a real change
 }
 
 
@@ -195,8 +202,11 @@ def check_case(case: dict, completion: str, tokens_generated: int, max_new_token
         "empty": not text,
     }
     if sources:
-        # The serving safety net fires when an answer barely overlaps its sources.
-        result["grounded"] = check_grounding_safety(case["prompt"], text, sources) == ""
+        cited = cite(case["prompt"], text, sources)
+        # Grounded: the serving safety net didn't need to lead with a quote.
+        result["grounded"] = not cited.safety_net_prefix
+        result["cited"] = bool(cited.citations)
+        result["cited_text"] = cited.full_text
     return result
 
 
@@ -228,7 +238,40 @@ def eval_behavior(engine, cases: list[dict], decoding: dict) -> tuple[dict, list
     grounded = [r["grounded"] for r in results if "grounded" in r]
     if grounded:
         metrics["behavior.rag_grounded_rate"] = sum(grounded) / len(grounded)
+        metrics["behavior.rag_cited_rate"] = sum(r["cited"] for r in results if "cited" in r) / len(grounded)
     return metrics, results
+
+
+def eval_retrieval(rows: list[dict]) -> tuple[dict, list]:
+    """Run each query's candidates through the production selection pipeline
+    (sanitize, drop injection attempts, rank, de-duplicate). Dropped
+    candidates count as ranked last.
+
+    Candidates are shuffled with a fixed per-query seed first: ranking ties
+    keep input order, so the file's own ordering must not leak the labels.
+    """
+    from app.retrieval import get_dense_reranker, select_sources
+
+    reranker = get_dense_reranker()
+    mrr = p_at_1 = recall_at_3 = 0.0
+    details = []
+    for i, row in enumerate(rows):
+        order = list(range(len(row["candidates"])))
+        random.Random(i).shuffle(order)
+        candidates = [{**row["candidates"][j], "link": "", "_id": j} for j in order]
+        kept = select_sources(row["query"], candidates, max_results=len(candidates),
+                              reranker=reranker, dedup_ratio=1.01)  # rank everything; no dedup
+        ranked = [c["_id"] for c in kept] + [j for j in order if j not in {c["_id"] for c in kept}]
+        relevant = set(row["relevant"])
+        first_hit = next((k for k, cid in enumerate(ranked) if cid in relevant), None)
+        mrr += 1 / (first_hit + 1) if first_hit is not None else 0.0
+        p_at_1 += ranked[0] in relevant
+        recall_at_3 += len(relevant & set(ranked[:3])) / len(relevant)
+        details.append({"query": row["query"], "ranking": ranked, "relevant": sorted(relevant),
+                        "top_correct": ranked[0] in relevant})
+    n = max(len(rows), 1)
+    metrics = {"retrieval.mrr": mrr / n, "retrieval.p_at_1": p_at_1 / n, "retrieval.recall_at_3": recall_at_3 / n}
+    return metrics, details
 
 
 # ── Runner ────────────────────────────────────────────────────────────
@@ -263,6 +306,7 @@ def run_eval(engine, suites=ALL_SUITES, limit: int | None = None, max_new_tokens
         "heldout": lambda rows: eval_heldout(engine, rows),
         "mc": lambda rows: eval_multiple_choice(engine, rows),
         "behavior": lambda rows: eval_behavior(engine, rows, decoding),
+        "retrieval": eval_retrieval,
     }
     for suite in suites:
         path = data_files[suite]

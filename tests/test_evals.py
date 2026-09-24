@@ -73,7 +73,7 @@ def test_report_structure_and_sanity(report):
     for key in ("mc.accuracy", "mc.accuracy_norm", "behavior.pass_rate", "behavior.template_leak_rate"):
         assert 0.0 <= m[key] <= 1.0
     assert report["decoding"]["temperature"] == 0.0
-    assert set(report["data"]) == {"heldout", "mc", "behavior"}
+    assert set(report["data"]) == {"heldout", "mc", "behavior", "retrieval"}
     assert all(len(d["sha256"]) == 64 for d in report["data"].values())
     assert len(report["details"]["behavior"]) == 4 and len(report["details"]["mc"]) == 4
 
@@ -176,3 +176,13 @@ def test_cli_exit_codes(tmp_path):
     baseline["data"]["heldout"]["sha256"] = "0" * 64
     (tmp_path / "other.json").write_text(json.dumps(baseline))
     assert cli_main(args + ["--baseline", str(tmp_path / "other.json")]) == 2
+
+
+def test_retrieval_suite_scores_the_production_ranker():
+    metrics, details = harness.eval_retrieval(harness.load_jsonl(harness.DATA_FILES["retrieval"]))
+    # Measured when the ranker was built: 0.872 vs 0.783 for the previous
+    # word-overlap ranker and 0.555 for random order.
+    assert metrics["retrieval.mrr"] > 0.85
+    assert metrics["retrieval.recall_at_3"] > 0.9
+    injection = next(d for d in details if d["query"] == "What is the capital of Canada?")
+    assert injection["top_correct"], "keyword-stuffed injection result outranked the real answer"

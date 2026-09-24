@@ -388,9 +388,9 @@ export default function Home() {
             );
           },
           (metrics) => {
-            const finalContent = metrics.safety_net_prefix 
-              ? metrics.safety_net_prefix + currentContent
-              : currentContent;
+            // Prefer the server's cited version of the answer when it sent one.
+            const finalContent = metrics.final_text
+              ?? (metrics.safety_net_prefix ? metrics.safety_net_prefix + currentContent : currentContent);
               
             setSessions((prev) =>
               prev.map((s) =>

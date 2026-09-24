@@ -199,49 +199,21 @@ def duckduckgo_search(query: str, max_results: int = 3) -> list[dict]:
         logger.error("DuckDuckGo search failed: %s", e)
         return []
 
-import difflib
-
 def clean_and_rank_results(query: str, results: list, max_results: int = 3) -> list:
-    if not results:
-        return []
-        
-    query_words = set(re.findall(r'\w+', query.lower()))
-    
-    cleaned = []
-    for r in results:
-        snip = re.sub(r'(?:\.{3,}|…)', '', r['snippet'])
-        snip = re.sub(r'\s+', ' ', snip).strip()[:MAX_SNIPPET_CHARS]
-        
-        title = re.sub(r'\s+', ' ', r['title']).strip()[:MAX_TITLE_CHARS]
-        link = sanitize_link(r['link'])
-        
-        snip_words = set(re.findall(r'\w+', snip.lower()))
-        overlap = len(query_words.intersection(snip_words))
-        
-        if snip and title:
-            cleaned.append({
-                "title": title,
-                "snippet": snip,
-                "link": link,
-                "overlap": overlap
-            })
-            
-    cleaned.sort(key=lambda x: x["overlap"], reverse=True)
-    
-    final = []
-    for c in cleaned:
-        is_dup = False
-        for f in final:
-            ratio = difflib.SequenceMatcher(None, c['snippet'], f['snippet']).ratio()
-            if ratio > 0.8:
-                is_dup = True
-                break
-        if not is_dup:
-            final.append({"title": c['title'], "snippet": c['snippet'], "link": c['link']})
-            if len(final) == max_results:
-                break
-                
-    return final
+    """Sanitize, rank, de-duplicate and truncate raw provider results
+    (ranking lives in app/retrieval.py)."""
+    from app.retrieval import get_dense_reranker, select_sources
+
+    prepared = [
+        {
+            "title": re.sub(r"\s+", " ", r.get("title", "")).strip()[:MAX_TITLE_CHARS],
+            "snippet": re.sub(r"\s+", " ", r.get("snippet", "")).strip()[:MAX_SNIPPET_CHARS],
+            "link": sanitize_link(r.get("link", "")),
+        }
+        for r in results
+    ]
+    return select_sources(query, prepared, max_results, reranker=get_dense_reranker())
+
 
 def web_search(query: str, max_results: int = 3) -> list[dict]:
     """Retrieve search results using Serper -> DDG fallback with caching."""

@@ -39,7 +39,8 @@ from app.schemas import GenerationRequest, GenerationResponse, FinetuneRequest, 
 from app.security import SecurityMiddleware, client_ip, require_admin
 # Prompt construction lives in app.prompting so the eval harness (evals/)
 # builds exactly the prompts served here.
-from app.prompting import build_prompt_with_budget, check_grounding_safety, history_pairs  # noqa: F401
+from app.citations import cite
+from app.prompting import build_prompt_with_budget, history_pairs
 
 # Set up logging
 logging.basicConfig(
@@ -371,8 +372,10 @@ def generate_text(request: Request, body: GenerationRequest):
         )
 
     answer = result["completion_text"].strip()
+    citations = None
     if sources:
-        answer = check_grounding_safety(body.prompt, answer, sources) + answer
+        cited = cite(body.prompt, answer, sources)
+        answer, citations = cited.full_text, cited.citations
 
     tokens_gen = result["tokens_generated"]
     latency = result["time_taken_seconds"]
@@ -390,6 +393,7 @@ def generate_text(request: Request, body: GenerationRequest):
         "time_taken_seconds": latency,
         "tokens_per_second": result["tokens_per_second"],
         "sources": sources,
+        "citations": citations,
         "adapter": adapter.name if adapter else None,
     }
 
@@ -498,9 +502,15 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
                     }
                     if sources is not None:
                         final_data["sources"] = sources
-                        safety_prefix = check_grounding_safety(body.prompt, "".join(accumulated).strip(), sources)
-                        if safety_prefix:
-                            final_data["safety_net_prefix"] = safety_prefix
+                        if sources:
+                            cited = cite(body.prompt, "".join(accumulated).strip(), sources)
+                            # final_text: the answer with inline [n] citations,
+                            # replacing the raw streamed text. safety_net_prefix
+                            # stays for clients that predate final_text.
+                            final_data["final_text"] = cited.full_text
+                            final_data["citations"] = cited.citations
+                            if cited.safety_net_prefix:
+                                final_data["safety_net_prefix"] = cited.safety_net_prefix
                     yield _sse(final_data)
                     return
                 else:
