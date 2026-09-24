@@ -1,6 +1,7 @@
 # tests/test_batching.py
 """Continuous batching (app/batching.py): correctness, isolation, backpressure."""
 
+import copy
 import threading
 import time
 
@@ -10,7 +11,8 @@ import torch
 from app.adapters import Adapter, expected_lora_shapes
 from app.batching import ContinuousBatcher, EngineBusy
 from app.inference import GPTInferenceEngine
-from model.gpt import generate
+from model.gpt import GPTModel, generate
+from model.lora import inject_lora, strip_lora_wrapper_keys
 
 CFG = {"vocab_size": 50257, "context_length": 64, "emb_dim": 32, "n_heads": 2,
        "n_layers": 2, "drop_rate": 0.0, "qkv_bias": True, "model_size": "tiny"}
@@ -77,22 +79,23 @@ def test_uncached_requests_share_the_batch_correctly():
         assert got == reference(engine, prompt, **extra)
 
 
-def _random_adapter(engine, name: str, seed: int) -> Adapter:
+def _random_adapter(engine, name: str, seed: int, r: int = 4) -> Adapter:
     gen = torch.Generator().manual_seed(seed)
-    shapes = expected_lora_shapes(engine.model_config, 4)
+    shapes = expected_lora_shapes(engine.model_config, r)
     state = {k: torch.randn(*shape, generator=gen) * 0.5 for k, shape in shapes.items()}
-    return Adapter(name=name, r=4, alpha=8.0, state_dict=state)
+    return Adapter(name=name, r=r, alpha=2.0 * r, state_dict=state)
 
 
-def test_mixed_adapters_are_isolated():
-    """Requests for different adapters never run in the same batch: every
-    output equals running that request alone with its own adapter."""
+def test_mixed_adapters_share_a_batch_and_stay_isolated():
+    """Requests for different adapters (and the base model) run in the same
+    batch, and every output equals running that request alone."""
     engine = make_engine()
     a1, a2 = _random_adapter(engine, "a1", 1), _random_adapter(engine, "a2", 2)
     plan = [(PROMPTS[1], a1), (PROMPTS[1], None), (PROMPTS[1], a2), (PROMPTS[2], a1), (PROMPTS[1], a1)]
     with engine.model_lock:
         handles = [engine.submit(p, adapter=a, **SAMPLING) for p, a in plan]
     batched = [list(h.tokens()) for h in handles]
+    assert engine.batcher.peak_batch_size >= 4, "different adapters were not batched together"
 
     for (prompt, adapter), got in zip(plan, batched):
         engine.set_adapter(adapter)
@@ -100,6 +103,48 @@ def test_mixed_adapters_are_isolated():
     engine.set_adapter(None)
     # Same prompt, different adapter -> different text (adapters really applied).
     assert len({tuple(batched[0]), tuple(batched[1]), tuple(batched[2])}) == 3
+
+
+def test_pooled_adapters_match_independent_single_adapter_models():
+    """Ground truth: the classic LoRALinear path, one model per adapter.
+    Mixed ranks share the pool (zero-padded), including growing its rank."""
+    engine = make_engine()
+    # An independent plain model (no pool, no wrappers) with the same weights.
+    base = GPTModel(CFG).eval()
+    base.load_state_dict(strip_lora_wrapper_keys(engine.model.state_dict()))
+    adapters = [_random_adapter(engine, "r4", 3, r=4), _random_adapter(engine, "r32", 4, r=32)]
+    indices = [engine.lora_pool.reserve(a) for a in adapters]
+    engine.lora_pool.load_pending()
+    assert engine.lora_pool.rank == 32
+
+    x = torch.randint(0, CFG["vocab_size"], (3, 12))
+    with torch.no_grad():
+        mixed = engine.model(x, lora=engine.lora_pool.rows([indices[0], 0, indices[1]], x.device))
+        for row, adapter in ((0, adapters[0]), (1, None), (2, adapters[1])):
+            single = copy.deepcopy(base)
+            if adapter is not None:
+                inject_lora(single, r=adapter.r, alpha=adapter.alpha)
+                single.load_state_dict(adapter.state_dict, strict=False)
+            expected = single(x[row:row + 1])[0]
+            assert torch.allclose(mixed[row], expected, atol=1e-4), row
+    for i in indices:
+        engine.lora_pool.release(i)
+
+
+def test_more_adapters_than_pool_entries_wait_their_turn(monkeypatch):
+    monkeypatch.setenv("ENGINE_MAX_ADAPTERS", "2")
+    engine = make_engine()
+    adapters = [_random_adapter(engine, f"a{i}", 10 + i) for i in range(3)]
+    long = {**SAMPLING, "max_new_tokens": 10, "min_new_tokens": 10}
+    with engine.model_lock:
+        handles = [engine.submit(PROMPTS[1], adapter=a, **long) for a in adapters]
+        time.sleep(0.2)
+        assert not handles[2].wait_admitted(0), "third adapter admitted with no free pool entry"
+    outputs = [list(h.tokens()) for h in handles]  # completes: no deadlock
+    for adapter, got in zip(adapters, outputs):
+        engine.set_adapter(adapter)
+        assert got == reference(engine, PROMPTS[1], **long)
+    engine.set_adapter(None)
 
 
 def test_cancel_frees_the_slot_promptly():
@@ -177,3 +222,14 @@ def test_half_precision_engine_runs_end_to_end():
     out = engine.generate(PROMPTS[1], **SAMPLING)
     assert out["tokens_generated"] > 0
     assert engine.batcher.cache.k.dtype == torch.bfloat16
+
+
+def test_models_with_pooled_adapters_can_be_deep_copied():
+    engine = make_engine()
+    adapter = _random_adapter(engine, "a", 5)
+    engine.set_adapter(adapter)
+    clone = copy.deepcopy(engine.model)
+    x = torch.randint(0, CFG["vocab_size"], (1, 8))
+    with torch.no_grad():
+        assert torch.equal(clone(x), engine.model(x))
+    engine.set_adapter(None)

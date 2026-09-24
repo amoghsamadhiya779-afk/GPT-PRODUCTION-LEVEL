@@ -81,7 +81,12 @@ Measured on 4 CPU cores, GPT-2 small size, 8 concurrent 64-token requests:
 | One request at a time (previous behavior) | 25.0 tok/s | 20.5 s |
 | Continuous batching, 8 slots | **68.0 tok/s** (2.7×) | **7.5 s** |
 
-One batch runs one LoRA adapter; admission is FIFO, so a request for a different adapter waits for the current batch to drain and is never starved. The cost: traffic that interleaves adapters batches poorly. Requests on the server-default adapter, the normal case, batch fully; mixing adapters in one batch (multi-LoRA batching) is the natural next step.
+**Multi-LoRA batching:** requests for different adapters, and the base model, share the same batch. Adapters live in a pool (`model/lora.py`, `ENGINE_MAX_ADAPTERS`, default 8) instead of being wired into the model. Each adapted projection adds the per-row update `B_i A_i x` for its own row's adapter, as one batched matmul over pool entries gathered by row (the S-LoRA/Punica approach). `alpha/r` is folded into `B`, and lower-rank adapters are zero-padded, so results are exact; `tests/test_batching.py` checks them against independent single-adapter models. Admission is FIFO: if every pool entry is pinned by running requests, the next request waits rather than evicting one in use.
+
+| 8 concurrent 64-token requests (4 CPU cores, GPT-2 small size) | One adapter per batch (previous) | Multi-LoRA batching |
+|---|---|---|
+| Mixed traffic: adapter A, adapter B, base, interleaved | 24.5 tok/s, peak batch 1 | **60.0 tok/s**, peak batch 8 |
+| Base model only | 68.0 tok/s | 67.5 tok/s |
 
 ### Dynamic LoRA Adapters
 The backend hot-swaps LoRA (Low-Rank Adaptation) adapters at runtime without reloading the base model — used for the SFT instruction-tuning adapters (`sft_v1_small`/`sft_v1_medium`) and for adapters trained on-demand via Teach Mode (`/finetune`).
@@ -116,7 +121,7 @@ All settings are documented in [`.env.example`](.env.example).
 
 ## 3. Project Structure & Testing
 
-The system is covered by a `pytest` suite of **108 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
+The system is covered by a `pytest` suite of **111 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
 
 ```
 GPT-PRODUCTION-LEVEL/
@@ -126,7 +131,7 @@ GPT-PRODUCTION-LEVEL/
 ├── data/                 # Datasets & tokenization utilities
 ├── training/             # Pre-training and LoRA fine-tuning scripts
 ├── evals/                # Eval harness: perplexity, multiple choice, behavior checks
-├── tests/                # 108 unit & integration tests
+├── tests/                # 111 unit & integration tests
 └── checkpoints/          # Base models and adapter states
 ```
 
@@ -181,7 +186,7 @@ npm run dev
 While this is a robust system, it is built for educational/portfolio purposes and is not a replacement for commercial LLMs:
 - **CPU Bottleneck**: The backend currently targets CPU deployment (e.g. Hugging Face free tier). Real-world systems run on GPUs via Triton/vLLM.
 - **Model Size**: 406M parameters is very small. It struggles with complex logical reasoning without RAG grounding.
-- **Batching**: Continuous batching is implemented, but one batch serves one LoRA adapter at a time (no multi-LoRA batching), prefill and decode share a step, and there is no paged attention -- the pieces vLLM-class servers add on top.
+- **Batching**: Continuous batching and multi-LoRA batching are implemented, but prefill and decode share a step (a long prompt delays everyone's next token), and there is no paged attention or custom CUDA kernels -- the pieces vLLM-class servers add on top.
 - **Generation Quality**: The custom LoRA finetuning on Cosmopedia text introduces style shifts but does not eliminate hallucinations entirely.
 
 ---
