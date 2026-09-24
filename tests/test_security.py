@@ -18,7 +18,7 @@ import torch
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from app.api import EngineGate, app, build_prompt_with_budget
+from app.api import app, build_prompt_with_budget
 from app.search import sanitize_link
 from app.security import client_ip
 from model.tokenizer import GPT2Tokenizer
@@ -49,11 +49,17 @@ def live_server():
     thread.join(timeout=10)
 
 
-def _gate_is_free() -> bool:
-    gate = app.state.engine_gate
-    if gate.acquire(timeout=0.1):
-        gate.release()
-        return True
+def _engine_idle() -> bool:
+    stats = app.state.engine.batcher.stats()
+    return stats["active"] == 0 and stats["waiting"] == 0
+
+
+def _wait_idle(seconds: float = 10.0) -> bool:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if _engine_idle():
+            return True
+        time.sleep(0.1)
     return False
 
 
@@ -73,11 +79,12 @@ SOURCE = [{"title": "Mars", "snippet": "Mars is the fourth planet from the Sun."
 # ── Engine gate / streaming ──────────────────────────────────────────
 
 
-def test_stream_disconnect_releases_engine_gate(live_server, monkeypatch):
+def test_stream_disconnect_frees_the_batch_slot(live_server, monkeypatch):
     """Disconnecting right after the `sources` event used to leak the engine
-    lock forever, so every later generation request returned 503."""
+    lock forever, so every later generation request returned 503. Now the
+    request must be cancelled and its batch slot freed."""
     monkeypatch.setattr("app.search.web_search", lambda q, max_results=3: SOURCE)
-    assert _gate_is_free()
+    assert _engine_idle()
 
     sock = _open_stream(live_server, {
         "prompt": "Tell me about Mars", "max_new_tokens": 200, "min_new_tokens": 0, "web_search": True,
@@ -89,10 +96,7 @@ def test_stream_disconnect_releases_engine_gate(live_server, monkeypatch):
         received += chunk
     sock.close()
 
-    deadline = time.time() + 10
-    while not _gate_is_free():
-        assert time.time() < deadline, "engine gate still held 10s after the client disconnected"
-        time.sleep(0.2)
+    assert _wait_idle(), "generation still running 10s after the client disconnected"
 
 
 def test_web_search_does_not_block_event_loop(live_server, monkeypatch):
@@ -116,28 +120,17 @@ def test_web_search_does_not_block_event_loop(live_server, monkeypatch):
         sock.close()
 
 
-def test_engine_gate_rejects_instead_of_queueing_forever():
-    gate = EngineGate(max_waiting=0)
-    assert gate.acquire(timeout=1.0)
-    start = time.time()
-    assert not gate.acquire(timeout=5.0)  # queue full -> immediate refusal
-    assert time.time() - start < 0.5
-    gate.release()
-    assert gate.acquire(timeout=0.1)
-    gate.release()
-
-
 def test_stream_error_does_not_leak_exception_text(client, monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("secret internal path /srv/models/x.pt")
         yield  # pragma: no cover - makes this a generator
 
-    monkeypatch.setattr(app.state.engine, "generate_stream", boom)
+    monkeypatch.setattr(app.state.engine, "stream_text", boom)
     resp = client.post("/generate/stream", json={"prompt": "hi", "max_new_tokens": 5, "min_new_tokens": 0})
     assert resp.status_code == 200
     assert "secret internal path" not in resp.text
     assert "Generation failed" in resp.text
-    assert _gate_is_free()
+    assert _wait_idle()
 
 
 # ── Request handling ─────────────────────────────────────────────────
@@ -222,13 +215,13 @@ def test_special_token_strings_in_prompts_stay_plain_text(client, monkeypatch):
 
     seen = {}
     import app.inference as inference
-    real_stream = inference.generate_stream
 
-    def spy(model, idx, *args, **kwargs):
-        seen["ids"] = idx[0].tolist()
-        return real_stream(model, idx, *args, **kwargs)
+    class SpyHandle(inference.GenerationHandle):
+        def __init__(self, prompt_ids, *args, **kwargs):
+            seen["ids"] = prompt_ids
+            super().__init__(prompt_ids, *args, **kwargs)
 
-    monkeypatch.setattr(inference, "generate_stream", spy)
+    monkeypatch.setattr(inference, "GenerationHandle", SpyHandle)
     resp = client.post("/generate", json={"prompt": "a <|endoftext|> b", "max_new_tokens": 2, "min_new_tokens": 0})
     assert resp.status_code == 200
     assert tok.eos_id not in seen["ids"]

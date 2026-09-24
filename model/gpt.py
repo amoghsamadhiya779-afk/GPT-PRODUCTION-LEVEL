@@ -62,6 +62,7 @@ class GPTModel(nn.Module):
         in_idx: Tensor,
         use_cache: bool = False,
         past_key_values: list[tuple[Tensor, Tensor]] | None = None,
+        slot_batch=None,
     ) -> Tensor | tuple[Tensor, list[tuple[Tensor, Tensor]]]:
         """Forward pass through the GPT model.
 
@@ -69,6 +70,9 @@ class GPTModel(nn.Module):
             in_idx: Input token indices, shape (batch_size, seq_len).
             use_cache: Whether to return the updated key/value cache.
             past_key_values: List of (past_key, past_value) tuples for each block.
+            slot_batch: model.kv_cache.SlotBatch for batched serving. Rows may
+                be different sequences at different positions; keys/values
+                go to the shared slot cache and only logits are returned.
 
         Returns:
             If use_cache is False: Logits tensor of shape (batch_size, seq_len, vocab_size).
@@ -76,6 +80,14 @@ class GPTModel(nn.Module):
         """
         batch_size, seq_len = in_idx.shape
         tok_embeds = self.tok_emb(in_idx)
+
+        if slot_batch is not None:
+            if int(slot_batch.positions.max()) >= self.cfg["context_length"]:
+                raise ValueError(f"Position exceeds the model's context length {self.cfg['context_length']}.")
+            x = self.drop_emb(tok_embeds + self.pos_emb(slot_batch.positions))
+            for i, block in enumerate(self.trf_blocks):
+                x, _ = block(x, slot=(slot_batch, i))
+            return self.out_head(self.final_norm(x))
 
         # Calculate dynamic absolute position indices for positional embeddings
         prev_tokens = past_key_values[0][0].shape[-2] if past_key_values is not None else 0

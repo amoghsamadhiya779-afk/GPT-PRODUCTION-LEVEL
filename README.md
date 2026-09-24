@@ -71,6 +71,18 @@ graph LR
 - **GPT-2 Small (124M)**: ~21.4 tokens/second
 - **GPT-2 Medium (406M)**: ~8.6 tokens/second
 
+### Continuous Batching (Throughput)
+Concurrent requests share forward passes. A scheduler thread keeps up to `ENGINE_MAX_BATCH` sequences in flight; between steps it admits waiting requests, prefills new prompts in one padded pass, then runs **one batched decode step for every active sequence**, each sampled with its own settings. Keys/values live in a preallocated slot cache (`model/kv_cache.py`) where a token's cache index equals its position, so sequences of different lengths batch without copying. Output is token-for-token identical to single-request generation (`tests/test_batching.py`), including past the context window. Weights and KV cache run in bf16/fp16 on GPU (`MODEL_DTYPE`).
+
+Measured on 4 CPU cores, GPT-2 small size, 8 concurrent 64-token requests:
+
+| Mode | Throughput | Worst-case latency |
+|---|---|---|
+| One request at a time (previous behavior) | 25.0 tok/s | 20.5 s |
+| Continuous batching, 8 slots | **68.0 tok/s** (2.7×) | **7.5 s** |
+
+One batch runs one LoRA adapter; admission is FIFO, so a request for a different adapter waits for the current batch to drain and is never starved. The cost: traffic that interleaves adapters batches poorly. Requests on the server-default adapter, the normal case, batch fully; mixing adapters in one batch (multi-LoRA batching) is the natural next step.
+
 ### Dynamic LoRA Adapters
 The backend hot-swaps LoRA (Low-Rank Adaptation) adapters at runtime without reloading the base model — used for the SFT instruction-tuning adapters (`sft_v1_small`/`sft_v1_medium`) and for adapters trained on-demand via Teach Mode (`/finetune`).
 
@@ -92,7 +104,7 @@ When web search is enabled, the API:
 4. **Safety Net**: Computes extractive overlap on the generated answer; if overlap is near zero (hallucination), it prepends a direct quote from the sources.
 
 ### Security & Robustness
-- **Admission control:** one model instance, guarded by a gate with a bounded wait queue (`ENGINE_MAX_QUEUE`) — overload gets a fast `503` + `Retry-After` instead of piling up threads. Streaming generations own the gate until the model actually stops, so client disconnects can't leak or double-release it.
+- **Admission control:** the batch scheduler has a bounded wait queue (`ENGINE_MAX_QUEUE`) — overload gets a fast `503` + `Retry-After` instead of piling up threads. A client disconnect cancels its request and frees the batch slot at the next step.
 - **Non-blocking I/O:** web search and adapter loading run off the event loop.
 - **Admin-only operations:** reading collected feedback and changing the server-default adapter require `Authorization: Bearer $ADMIN_API_KEY`, and are disabled when no key is set.
 - **Abuse limits:** proxy-aware per-IP rate limits (`TRUSTED_PROXY_HOPS`), request body cap, bounded schemas, bounded caches and storage; Teach Mode cannot overwrite existing or shipped adapters.
@@ -104,7 +116,7 @@ All settings are documented in [`.env.example`](.env.example).
 
 ## 3. Project Structure & Testing
 
-The system is covered by a `pytest` suite of **100 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
+The system is covered by a `pytest` suite of **108 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
 
 ```
 GPT-PRODUCTION-LEVEL/
@@ -114,7 +126,7 @@ GPT-PRODUCTION-LEVEL/
 ├── data/                 # Datasets & tokenization utilities
 ├── training/             # Pre-training and LoRA fine-tuning scripts
 ├── evals/                # Eval harness: perplexity, multiple choice, behavior checks
-├── tests/                # 100 unit & integration tests
+├── tests/                # 108 unit & integration tests
 └── checkpoints/          # Base models and adapter states
 ```
 
@@ -169,7 +181,7 @@ npm run dev
 While this is a robust system, it is built for educational/portfolio purposes and is not a replacement for commercial LLMs:
 - **CPU Bottleneck**: The backend currently targets CPU deployment (e.g. Hugging Face free tier). Real-world systems run on GPUs via Triton/vLLM.
 - **Model Size**: 406M parameters is very small. It struggles with complex logical reasoning without RAG grounding.
-- **Batching**: The FastAPI implementation handles requests sequentially or via threads. It lacks Continuous Batching (iteration-level scheduling) required for FAANG-scale throughput.
+- **Batching**: Continuous batching is implemented, but one batch serves one LoRA adapter at a time (no multi-LoRA batching), prefill and decode share a step, and there is no paged attention -- the pieces vLLM-class servers add on top.
 - **Generation Quality**: The custom LoRA finetuning on Cosmopedia text introduces style shifts but does not eliminate hallucinations entirely.
 
 ---

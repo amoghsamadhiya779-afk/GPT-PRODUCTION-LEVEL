@@ -75,13 +75,13 @@ def test_generate_sends_history_to_the_model(client, monkeypatch):
     import app.inference as inference
 
     seen = {}
-    real_stream = inference.generate_stream
 
-    def spy(model, idx, *args, **kwargs):
-        seen["prompt"] = tok.decode(idx[0].tolist())
-        return real_stream(model, idx, *args, **kwargs)
+    class SpyHandle(inference.GenerationHandle):
+        def __init__(self, prompt_ids, *args, **kwargs):
+            seen["prompt"] = tok.decode(prompt_ids)
+            super().__init__(prompt_ids, *args, **kwargs)
 
-    monkeypatch.setattr(inference, "generate_stream", spy)
+    monkeypatch.setattr(inference, "GenerationHandle", SpyHandle)
     resp = client.post("/generate", json={
         "prompt": "And its moons?",
         "max_new_tokens": 2, "min_new_tokens": 0,

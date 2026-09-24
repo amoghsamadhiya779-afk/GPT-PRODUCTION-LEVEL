@@ -4,11 +4,10 @@
 Exposes endpoints for text generation, system health checks, and
 training loss plot visualization. Supports lifespan checkpoint preloading.
 
-Concurrency model: there is one model instance, so every operation that runs
-or mutates it (generation, applying an adapter, snapshotting weights for
-fine-tuning) holds the `EngineGate`. The gate has a bounded wait queue so a
-burst of requests is turned away with a fast 503 instead of tying up every
-server thread waiting for the model.
+Concurrency model: requests are submitted to the engine's continuous-batching
+scheduler (app/batching.py), which runs up to ENGINE_MAX_BATCH generations
+in the same forward passes. Its wait queue is bounded (ENGINE_MAX_QUEUE), so a
+burst beyond capacity gets a fast 503 instead of tying up server threads.
 """
 
 import asyncio
@@ -33,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import adapters as adapter_store
 from app.adapters import BASE_MODEL, AdapterError, AdapterNotFound
+from app.batching import EngineBusy
 from app.finetune import run_lora_finetune_job
 from app.inference import GPTInferenceEngine
 from app.schemas import GenerationRequest, GenerationResponse, FinetuneRequest, FinetuneStatus, FeedbackRequest
@@ -64,7 +64,6 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-ENGINE_MAX_QUEUE = _env_int("ENGINE_MAX_QUEUE", 8)
 ENGINE_QUEUE_TIMEOUT = float(_env_int("ENGINE_QUEUE_TIMEOUT", 30))
 MAX_TEACH_ADAPTERS = _env_int("MAX_TEACH_ADAPTERS", 50)
 MAX_FINETUNE_JOBS_KEPT = 50
@@ -85,37 +84,6 @@ PLACEHOLDER_CONFIG = {
 }
 
 
-class EngineGate:
-    """Exclusive access to the model with a bounded wait queue.
-
-    Acquire and release may happen on different threads: a streaming request
-    acquires in the request handler, then hands ownership to the generation
-    thread, which releases only when generation has really stopped.
-    """
-
-    def __init__(self, max_waiting: int) -> None:
-        self._sem = threading.BoundedSemaphore(1)
-        self._mutex = threading.Lock()
-        self._waiting = 0
-        self.max_waiting = max_waiting
-
-    def acquire(self, timeout: float) -> bool:
-        if self._sem.acquire(blocking=False):
-            return True
-        with self._mutex:
-            if self._waiting >= self.max_waiting:
-                return False
-            self._waiting += 1
-        try:
-            return self._sem.acquire(timeout=timeout)
-        finally:
-            with self._mutex:
-                self._waiting -= 1
-
-    def release(self) -> None:
-        self._sem.release()
-
-
 def _load_default_adapter(engine):
     """Resolve the DEFAULT_ADAPTER env var against a freshly loaded engine."""
     name = os.environ.get("DEFAULT_ADAPTER", "").strip()
@@ -134,7 +102,10 @@ def _install_engine(application: FastAPI, engine, checkpoint_path: str) -> None:
     default = _load_default_adapter(engine)
     engine.set_adapter(default)  # pre-apply so the first request doesn't pay for it
     application.state.default_adapter = default.name if default else None
+    previous = getattr(application.state, "engine", None)
     application.state.engine = engine
+    if previous is not None and previous is not engine:
+        previous.close()  # stop the placeholder's scheduler thread
     application.state.checkpoint_path = checkpoint_path
     application.state.parameter_count = engine.parameter_count
     application.state.device = str(engine.device)
@@ -167,7 +138,6 @@ async def lifespan(app: FastAPI):
     app.state.total_requests = 0
     app.state.total_tokens_generated = 0
     app.state.total_time_taken = 0.0
-    app.state.engine_gate = EngineGate(max_waiting=ENGINE_MAX_QUEUE)
     app.state.default_adapter = None
     app.state.finetune_jobs = {}
     app.state.finetune_lock = threading.Lock()
@@ -308,6 +278,8 @@ def health_check():
             "emb_dim": cfg.get("emb_dim") if cfg else None,
             "context": cfg.get("context_length") if cfg else None,
             "default_adapter": getattr(app.state, "default_adapter", None),
+            "dtype": str(getattr(engine, "dtype", "")).replace("torch.", "") or None,
+            "batching": engine.batcher.stats() if hasattr(engine, "batcher") else None,
         },
     )
 
@@ -383,21 +355,20 @@ def generate_text(request: Request, body: GenerationRequest):
         body.prompt, body.max_new_tokens, sources, engine.context_size, history_pairs(body.history)
     )
 
-    gate = app.state.engine_gate
-    if not gate.acquire(timeout=ENGINE_QUEUE_TIMEOUT):
-        return _busy_response()
     try:
         _count_request()
-        engine.set_adapter(adapter)
-        result = engine.generate(prompt=prompt_text, **_sampling_kwargs(body))
+        # Blocks this worker thread until done; the engine batches it with
+        # every other in-flight request.
+        result = engine.generate(prompt=prompt_text, adapter=adapter,
+                                 admit_timeout=ENGINE_QUEUE_TIMEOUT, **_sampling_kwargs(body))
+    except EngineBusy:
+        return _busy_response()
     except Exception:
         logger.exception("Generation error [req_id=%s]", req_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Inference execution failed (req_id={req_id}). Check server logs for details.",
         )
-    finally:
-        gate.release()
 
     answer = result["completion_text"].strip()
     if sources:
@@ -435,7 +406,7 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
 
     # Defense in depth: refuse to start an SSE stream against an engine object
     # that doesn't implement streaming, with a clean 503 before any response.
-    if not hasattr(engine, "generate_stream"):
+    if not hasattr(engine, "submit"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Streaming is not available on the current engine.",
@@ -452,53 +423,47 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
         body.prompt, body.max_new_tokens, sources, engine.context_size, history_pairs(body.history)
     )
 
-    gate = app.state.engine_gate
-    if not await asyncio.to_thread(gate.acquire, ENGINE_QUEUE_TIMEOUT):
+    # Queue the request and wait until it's scheduled before sending headers,
+    # so an overloaded server can still answer with a clean 503.
+    try:
+        handle = engine.submit(prompt_text, adapter=adapter, **_sampling_kwargs(body))
+    except EngineBusy:
         return _busy_response()
+    if not await asyncio.to_thread(handle.wait_admitted, ENGINE_QUEUE_TIMEOUT):
+        handle.cancel()
+        return _busy_response()
+    _count_request()
 
     loop = asyncio.get_running_loop()
     events: asyncio.Queue = asyncio.Queue()
-    stop_event = threading.Event()
 
     def emit(item: tuple) -> None:
         try:
             loop.call_soon_threadsafe(events.put_nowait, item)
         except RuntimeError:  # event loop closed (server shutting down)
-            stop_event.set()
+            handle.cancel()
 
-    def run_generation() -> None:
-        # This thread owns the engine gate from here on and releases it only
-        # once generation has actually stopped. Previously the response
-        # generator released it, which (a) leaked it forever if the client
-        # disconnected before the generator's try/finally was entered -- one
-        # such request made every later request 503 -- and (b) could release
-        # it while this thread was still running the model.
+    def relay_tokens() -> None:
+        # Decodes the scheduler's tokens to text and hands them to the event
+        # loop. Generation itself runs on the scheduler thread; cancelling the
+        # handle frees its batch slot at the next step and ends this loop.
         try:
-            engine.set_adapter(adapter)
             latency, tokens_gen = 0.0, 0
-            for text_chunk, latency, tokens_gen in engine.generate_stream(prompt=prompt_text, **_sampling_kwargs(body)):
-                if stop_event.is_set():
-                    return
+            for text_chunk, latency, tokens_gen in engine.stream_text(handle):
                 if text_chunk:
                     emit(("chunk", text_chunk, latency, tokens_gen))
-            emit(("done", None, latency, tokens_gen))
+            if handle.finish_reason != "cancelled":
+                emit(("done", None, latency, tokens_gen))
         except Exception:
             logger.exception("Streaming generation error [req_id=%s]", req_id)
             emit(("error", None, 0.0, 0))
-        finally:
-            gate.release()
 
-    try:
-        _count_request()
-        threading.Thread(target=run_generation, name=f"generate-{req_id[:8]}", daemon=True).start()
-    except BaseException:
-        gate.release()
-        raise
+    threading.Thread(target=relay_tokens, name=f"stream-{req_id[:8]}", daemon=True).start()
 
     async def event_generator():
         # Every yield sits inside this try, so however the response ends
         # (normal completion, client disconnect, cancellation, GC of an
-        # unfinished generator) the worker is told to stop.
+        # unfinished generator) the request is cancelled and its slot freed.
         accumulated = []
         try:
             if sources:
@@ -542,7 +507,7 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
                     yield _sse({"error": f"Generation failed (req_id={req_id}). Please try again."})
                     return
         finally:
-            stop_event.set()
+            handle.cancel()
 
     return StreamingResponse(
         event_generator(),
@@ -614,7 +579,7 @@ def start_finetuning(request: Request, body: FinetuneRequest):
 
     thread = threading.Thread(
         target=run_lora_finetune_job,
-        args=(job_state, body, engine, app.state.finetune_lock, app.state.engine_gate),
+        args=(job_state, body, engine, app.state.finetune_lock, engine.model_lock),
         daemon=True
     )
     thread.start()
