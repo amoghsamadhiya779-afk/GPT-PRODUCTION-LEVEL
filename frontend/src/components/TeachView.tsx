@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
+import { loadCorrections } from "@/lib/localFeedback";
 import { toast } from "@/components/ui/toast";
 import { Activity, Play, Plus, Trash2, FileJson, CheckCircle } from "lucide-react";
 
@@ -37,9 +38,9 @@ export default function TeachView() {
           setIsTraining(false);
           clearInterval(intervalRef.current);
           if (state.status === "done") {
-            toast("Fine-tuning completed successfully! You can activate it in Settings.", "success");
+            toast("Fine-tuning completed successfully! Select it in Settings to chat with it.", "success");
           } else {
-            setError("Fine-tuning failed.");
+            setError(state.error || "Fine-tuning failed.");
           }
         }
       } catch (err) {
@@ -50,21 +51,15 @@ export default function TeachView() {
     return () => clearInterval(intervalRef.current);
   }, [jobId, isTraining]);
 
-  const loadFeedback = async () => {
-    try {
-      const data = await api.getFeedback();
-      const corrections = data.feedback.filter((f: any) => f.correction);
-      if (corrections.length > 0) {
-        const newEx = corrections.map((f: any) => ({
-          instruction: f.prompt,
-          response: f.correction,
-        }));
-        setExamples(newEx);
-      } else {
-        toast("No feedback with corrections found.", "info");
-      }
-    } catch (err: any) {
-      toast("Failed to load feedback.", "error");
+  // Corrections this user submitted from chat, stored in their browser.
+  // (Server-side feedback pools every user's prompts, so it isn't readable
+  // from the public UI.)
+  const loadFeedback = () => {
+    const corrections = loadCorrections();
+    if (corrections.length > 0) {
+      setExamples(corrections);
+    } else {
+      toast("No corrections saved in this browser yet -- use \"Correct this answer\" in chat.", "info");
     }
   };
 

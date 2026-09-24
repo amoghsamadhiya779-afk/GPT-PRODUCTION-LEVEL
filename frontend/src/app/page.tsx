@@ -230,7 +230,11 @@ export default function Home() {
     handleSettingsChange(newSettings);
   };
 
-  const handleNewChat = async () => {
+  // Adapter choice lives in this browser's settings and is sent with each
+  // request, so starting a new chat never touches server state. (It used to
+  // call a global "deactivate adapter" endpoint, which stripped the
+  // instruction-tuned adapter from the model for *every* user.)
+  const handleNewChat = () => {
     const newId = String(Date.now());
     const newSession: ChatSession = {
       id: newId,
@@ -241,13 +245,6 @@ export default function Home() {
     setSessions([newSession, ...sessions]);
     setCurrentSessionId(newId);
     setCurrentNav("chat");
-
-    try {
-      await api.deactivateAdapter();
-      handleSettingsChange({ ...settings, activeAdapter: null });
-    } catch (e) {
-      console.warn("Failed to deactivate adapter on new chat");
-    }
   };
 
   const handleSelectChat = (id: string) => {
@@ -351,6 +348,7 @@ export default function Home() {
           repetition_penalty: settings.repetitionPenalty,
           use_cache: settings.useCache,
           web_search: settings.webSearch || false,
+          adapter: settings.activeAdapter ?? undefined,
         };
 
         let currentContent = "";
@@ -492,6 +490,8 @@ export default function Home() {
       if (e instanceof ApiError) {
         if (e.status === 429) {
           errorText = "[Error: Too many requests -- please wait a moment before trying again]";
+        } else if (e.status === 404) {
+          errorText = "[Error: The selected adapter no longer exists -- choose another in Settings]";
         } else if (e.status === 503) {
           errorText = "[Error: The model is warming up or busy -- please try again shortly]";
         } else if (e.status && e.status >= 500) {

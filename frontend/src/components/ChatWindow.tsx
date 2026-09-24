@@ -6,6 +6,8 @@ import { useTheme } from "./ThemeProvider";
 import { Cpu, User, Sparkles, AlertTriangle, GraduationCap, Atom, Compass, ThumbsUp, ThumbsDown, Edit3, Check, ArrowLeft } from "lucide-react";
 import Logo from "@/components/Logo";
 import { api } from "@/lib/api";
+import { saveCorrection } from "@/lib/localFeedback";
+import { safeHttpUrl } from "@/lib/utils";
 
 function MessageFeedback({ prompt, response }: { prompt: string; response: string }) {
   const [rating, setRating] = useState<"up" | "down" | null>(null);
@@ -26,6 +28,8 @@ function MessageFeedback({ prompt, response }: { prompt: string; response: strin
   };
 
   const handleCorrect = async () => {
+    // Keep a local copy so Teach Mode can train on this user's own corrections.
+    saveCorrection({ instruction: prompt, response: correction });
     try {
       await api.submitFeedback({ prompt, response, rating: "down", correction });
       setSubmitted(true);
@@ -301,7 +305,7 @@ export default function ChatWindow({
                           {message.sources.map((src, idx) => (
                             <a
                               key={idx}
-                              href={src.link}
+                              href={safeHttpUrl(src.link)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="block p-2.5 rounded-lg border border-border/30 bg-surface/20 hover:bg-surface/55 hover:border-accent/40 transition-all duration-200 group"
