@@ -72,7 +72,9 @@ graph LR
 - **GPT-2 Medium (406M)**: ~8.6 tokens/second
 
 ### Dynamic LoRA Adapters
-The backend supports hot-swapping LoRA (Low-Rank Adaptation) adapters at runtime without reloading the base model — used for the SFT instruction-tuning adapters (`sft_v1_small`/`sft_v1_medium`) and for adapters trained on-demand via Teach Mode (`/finetune`). Pick an adapter from the Settings panel to activate it against the live model.
+The backend hot-swaps LoRA (Low-Rank Adaptation) adapters at runtime without reloading the base model — used for the SFT instruction-tuning adapters (`sft_v1_small`/`sft_v1_medium`) and for adapters trained on-demand via Teach Mode (`/finetune`).
+
+Adapters are selected **per request** (`"adapter"` in the `/generate` body: omit it for the server default, `"none"` for the base model), so one user's choice never changes the model for anyone else. Every adapter is validated against the running model's architecture before use and applied all-or-nothing. Setting the server-wide default is an admin operation (see below).
 
 ### Personas (Prompt-Based)
 Personas (*Socrates*, *Einstein*, *Shakespeare*) are prompt-engineering presets, not separate fine-tuned models — there are no persona-specific LoRA adapters. Selecting one applies a style-framing instruction prepended to the prompt plus a matching sampling-parameter preset (temperature, penalties, web search on/off). Quality depends on the base/SFT model's ability to follow the framing instruction, not on dedicated persona training.
@@ -84,11 +86,20 @@ When web search is enabled, the API:
 3. Pre-pends the snippets as context.
 4. **Safety Net**: Computes extractive overlap on the generated answer; if overlap is near zero (hallucination), it prepends a direct quote from the sources.
 
+### Security & Robustness
+- **Admission control:** one model instance, guarded by a gate with a bounded wait queue (`ENGINE_MAX_QUEUE`) — overload gets a fast `503` + `Retry-After` instead of piling up threads. Streaming generations own the gate until the model actually stops, so client disconnects can't leak or double-release it.
+- **Non-blocking I/O:** web search and adapter loading run off the event loop.
+- **Admin-only operations:** reading collected feedback and changing the server-default adapter require `Authorization: Bearer $ADMIN_API_KEY`, and are disabled when no key is set.
+- **Abuse limits:** proxy-aware per-IP rate limits (`TRUSTED_PROXY_HOPS`), request body cap, bounded schemas, bounded caches and storage; Teach Mode cannot overwrite existing or shipped adapters.
+- **Untrusted content:** user prompts and web snippets are tokenized with special tokens disabled (no `<|endoftext|>` injection); search-result links are restricted to `http(s)`; checkpoints load with `weights_only=True`.
+
+All settings are documented in [`.env.example`](.env.example).
+
 ---
 
 ## 3. Project Structure & Testing
 
-The system is covered by a test suite (`pytest`) comprising **44 passing integration and unit tests**.
+The system is covered by a `pytest` suite of **76 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
 
 ```
 GPT-PRODUCTION-LEVEL/
@@ -97,7 +108,7 @@ GPT-PRODUCTION-LEVEL/
 ├── frontend/             # Next.js App Router (React)
 ├── data/                 # Datasets & tokenization utilities
 ├── training/             # Pre-training and LoRA fine-tuning scripts
-├── tests/                # 44 unit & integration tests
+├── tests/                # 76 unit & integration tests
 └── checkpoints/          # Base models and adapter states
 ```
 
