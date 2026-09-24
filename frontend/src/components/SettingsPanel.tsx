@@ -6,9 +6,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Sun, Moon, Cpu, Zap, Activity, Sparkles } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
-import { toast } from "@/components/ui/toast";
 
 import { HealthStatus } from "@/lib/api";
+
+const SERVER_DEFAULT = "__server_default__";
 
 export interface ModelSettings {
   model: string;
@@ -41,35 +42,24 @@ export default function SettingsPanel({
 }: SettingsPanelProps) {
   const { theme, setTheme } = useTheme();
   const [adapters, setAdapters] = React.useState<string[]>([]);
-  const [isActivating, setIsActivating] = React.useState(false);
+  const [defaultAdapter, setDefaultAdapter] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (isOpen) {
       import("@/lib/api").then(({ api }) => {
         api.getAdapters().then((res) => {
           if (res && res.adapters) setAdapters(res.adapters);
+          setDefaultAdapter(res?.default ?? null);
         });
       });
     }
   }, [isOpen]);
 
-  const handleAdapterChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+  // The choice is sent with each request (GeneratePayload.adapter); nothing
+  // on the server changes, so other users are unaffected.
+  const handleAdapterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
-    setIsActivating(true);
-    try {
-      const { api } = await import("@/lib/api");
-      if (val === "none") {
-        await api.deactivateAdapter();
-        updateSetting("activeAdapter", null);
-      } else {
-        await api.activateAdapter(val);
-        updateSetting("activeAdapter", val);
-      }
-    } catch (e) {
-      toast("Failed to change adapter", "error");
-    } finally {
-      setIsActivating(false);
-    }
+    updateSetting("activeAdapter", val === SERVER_DEFAULT ? null : val);
   };
 
   const updateSetting = <K extends keyof ModelSettings>(key: K, value: ModelSettings[K]) => {
@@ -307,11 +297,13 @@ export default function SettingsPanel({
                 </label>
                 <div className="flex flex-col gap-2">
                   <select
-                    value={settings.activeAdapter || "none"}
+                    value={settings.activeAdapter ?? SERVER_DEFAULT}
                     onChange={handleAdapterChange}
-                    disabled={isActivating}
                     className="w-full bg-elevated border border-border rounded-lg p-2 text-sm focus:outline-none focus:border-accent disabled:opacity-50"
                   >
+                    <option value={SERVER_DEFAULT}>
+                      Server Default ({defaultAdapter ?? "base model"})
+                    </option>
                     <option value="none">Base Model (No Adapter)</option>
                     {adapters.map((adapter) => (
                       <option key={adapter} value={adapter}>
@@ -320,7 +312,7 @@ export default function SettingsPanel({
                     ))}
                   </select>
                   <span className="text-[11px] text-muted block leading-normal">
-                    Hot-swap LoRA weights into the running model without reloading the base checkpoint.
+                    LoRA weights are hot-swapped per request without reloading the base checkpoint -- your choice only affects your own chats.
                   </span>
                 </div>
               </div>
