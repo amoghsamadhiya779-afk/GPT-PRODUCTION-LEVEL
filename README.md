@@ -104,7 +104,7 @@ All settings are documented in [`.env.example`](.env.example).
 
 ## 3. Project Structure & Testing
 
-The system is covered by a `pytest` suite of **91 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
+The system is covered by a `pytest` suite of **100 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
 
 ```
 GPT-PRODUCTION-LEVEL/
@@ -113,9 +113,28 @@ GPT-PRODUCTION-LEVEL/
 ├── frontend/             # Next.js App Router (React)
 ├── data/                 # Datasets & tokenization utilities
 ├── training/             # Pre-training and LoRA fine-tuning scripts
-├── tests/                # 91 unit & integration tests
+├── evals/                # Eval harness: perplexity, multiple choice, behavior checks
+├── tests/                # 100 unit & integration tests
 └── checkpoints/          # Base models and adapter states
 ```
+
+### Evaluation
+
+`python -m evals` scores a checkpoint (plus an optional adapter) through the same engine and prompt builder the API serves with:
+
+| Suite | What it measures |
+|---|---|
+| `heldout` | Response-only loss and perplexity on `data/sft_eval.jsonl`, masked exactly like SFT |
+| `mc` | 32 multiple-choice questions scored by answer log-likelihood (raw and per-token normalized) — a stable signal even when generations are weak |
+| `behavior` | 24 greedy generations checked by rules: factual recall, instruction following, chitchat, multi-turn memory, RAG answers over *invented* facts (only the sources can answer), plus hygiene on every output (template leakage, empty, failure to stop, repetition) |
+
+```bash
+python -m evals --checkpoint checkpoints/best_model.pt --adapter sft_v1_small --out reports/sft_v1_small.json
+# Gate a change: exit 1 if a gated metric regresses past its tolerance
+python -m evals --checkpoint checkpoints/best_model.pt --adapter sft_v1_small --baseline evals/baselines/small-sft_v1_small.json
+```
+
+Reports record eval-data hashes and decoding settings; comparing against a baseline built on different data or settings is refused (exit 2) rather than reported as a regression. The **Model Eval** workflow (Actions → *Run workflow*) runs the harness on real GPT-2 weights and gates against `evals/baselines/<size>-<adapter>.json` when one is committed.
 
 ---
 
