@@ -1,0 +1,32 @@
+{"id": "capital-france", "question": "What is the capital of France?", "choices": ["Paris", "Berlin", "Madrid", "Rome"], "answer": 0}
+{"id": "spider-legs", "question": "How many legs does a spider have?", "choices": ["Six", "Eight", "Four", "Ten"], "answer": 1}
+{"id": "water-formula", "question": "What is the chemical formula for water?", "choices": ["CO2", "H2O", "NaCl", "O2"], "answer": 1}
+{"id": "red-planet", "question": "Which planet is known as the Red Planet?", "choices": ["Venus", "Jupiter", "Mars", "Saturn"], "answer": 2}
+{"id": "seven-times-eight", "question": "What is 7 times 8?", "choices": ["54", "56", "64", "48"], "answer": 1}
+{"id": "romeo-juliet", "question": "Who wrote Romeo and Juliet?", "choices": ["Charles Dickens", "William Shakespeare", "Jane Austen", "Mark Twain"], "answer": 1}
+{"id": "photosynthesis-gas", "question": "Which gas do plants absorb from the air for photosynthesis?", "choices": ["Oxygen", "Nitrogen", "Carbon dioxide", "Helium"], "answer": 2}
+{"id": "boiling-point", "question": "At what temperature does water boil at sea level?", "choices": ["50 degrees Celsius", "100 degrees Celsius", "0 degrees Celsius", "20 degrees Celsius"], "answer": 1}
+{"id": "largest-ocean", "question": "Which is the largest ocean on Earth?", "choices": ["The Atlantic Ocean", "The Indian Ocean", "The Arctic Ocean", "The Pacific Ocean"], "answer": 3}
+{"id": "opposite-cold", "question": "What is the opposite of cold?", "choices": ["Hot", "Wet", "Dark", "Slow"], "answer": 0}
+{"id": "days-week", "question": "How many days are in a week?", "choices": ["Five", "Seven", "Ten", "Twelve"], "answer": 1}
+{"id": "blue-yellow", "question": "What color do you get by mixing blue and yellow paint?", "choices": ["Green", "Purple", "Orange", "Red"], "answer": 0}
+{"id": "sqrt-81", "question": "What is the square root of 81?", "choices": ["7", "8", "9", "10"], "answer": 2}
+{"id": "king-jungle", "question": "Which animal is known as the king of the jungle?", "choices": ["The elephant", "The lion", "The zebra", "The giraffe"], "answer": 1}
+{"id": "freezing-point", "question": "At what temperature does water freeze?", "choices": ["0 degrees Celsius", "10 degrees Celsius", "50 degrees Celsius", "100 degrees Celsius"], "answer": 0}
+{"id": "first-president", "question": "Who was the first president of the United States?", "choices": ["Abraham Lincoln", "Thomas Jefferson", "George Washington", "John Adams"], "answer": 2}
+{"id": "gravity", "question": "What force keeps us on the ground?", "choices": ["Magnetism", "Gravity", "Friction", "Electricity"], "answer": 1}
+{"id": "heart", "question": "Which organ pumps blood through the human body?", "choices": ["The lungs", "The liver", "The heart", "The kidneys"], "answer": 2}
+{"id": "largest-planet", "question": "What is the largest planet in our solar system?", "choices": ["Earth", "Jupiter", "Mars", "Mercury"], "answer": 1}
+{"id": "continents", "question": "How many continents are there?", "choices": ["Five", "Six", "Seven", "Nine"], "answer": 2}
+{"id": "fifteen-plus", "question": "What is 15 plus 27?", "choices": ["42", "32", "52", "41"], "answer": 0}
+{"id": "brazil-language", "question": "Which language is mainly spoken in Brazil?", "choices": ["Spanish", "Portuguese", "French", "German"], "answer": 1}
+{"id": "bees", "question": "What do bees make?", "choices": ["Milk", "Honey", "Silk", "Cotton"], "answer": 1}
+{"id": "daylight", "question": "What is the main source of light on Earth during the day?", "choices": ["The Moon", "The Sun", "Street lamps", "Stars"], "answer": 1}
+{"id": "glass-drop", "question": "If you drop a glass on a stone floor, what will most likely happen?", "choices": ["It will break", "It will float", "It will grow", "It will melt"], "answer": 0}
+{"id": "feathers-iron", "question": "Which is heavier: a kilogram of iron or a kilogram of feathers?", "choices": ["The iron", "The feathers", "They weigh the same"], "answer": 2}
+{"id": "capital-japan", "question": "What is the capital of Japan?", "choices": ["Beijing", "Seoul", "Tokyo", "Bangkok"], "answer": 2}
+{"id": "triangle-sides", "question": "How many sides does a triangle have?", "choices": ["Two", "Three", "Four", "Five"], "answer": 1}
+{"id": "earth-orbit", "question": "What does the Earth orbit around?", "choices": ["The Moon", "The Sun", "Mars", "Jupiter"], "answer": 1}
+{"id": "ice-heat", "question": "What happens to ice when it is heated?", "choices": ["It melts", "It gets harder", "It turns into sand", "It becomes colder"], "answer": 0}
+{"id": "umbrella", "question": "Why do people carry umbrellas?", "choices": ["To stay dry in the rain", "To cook food", "To make music", "To travel faster"], "answer": 0}
+{"id": "night-sky", "question": "What can you usually see in the sky on a clear night?", "choices": ["Stars", "Rainbows", "Clouds of sand", "Fish"], "answer": 0}

@@ -62,3 +62,6 @@ tests/temp_train.json
 tests/temp_val.json
 
 !checkpoints/adapters/*.pt
+
+# Eval harness output (python -m evals --out ...)
+reports/
