@@ -39,6 +39,9 @@ from app.finetune import run_lora_finetune_job
 from app.inference import GPTInferenceEngine
 from app.schemas import GenerationRequest, GenerationResponse, FinetuneRequest, FinetuneStatus, FeedbackRequest
 from app.security import SecurityMiddleware, client_ip, require_admin
+# The instruction template shared with SFT training, so serving prompts are
+# byte-for-byte what the adapters were trained on.
+from data.sft import PROMPT_HEADER, format_prompt
 
 # Set up logging
 logging.basicConfig(
@@ -351,19 +354,6 @@ def check_grounding_safety(prompt: str, answer: str, sources: list) -> str:
     return ""
 
 
-PROMPT_HEADER = (
-    "Below is an instruction that describes a task. "
-    "Write a response that appropriately completes the request.\n\n"
-    "### Instruction:\n"
-)
-
-
-def _base_prompt(instruction: str) -> str:
-    # Byte-exact Alpaca template the SFT adapters were trained on
-    # (training/finetune_instruct.py format_alpaca).
-    return f"{PROMPT_HEADER}{instruction}\n\n### Response:\n"
-
-
 def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources: list | None, context_size: int) -> tuple[str, list | None]:
     """Build the model prompt so prompt + completion fit the context window.
 
@@ -383,18 +373,18 @@ def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources:
     # generate(), silently cutting off the instruction header so the model no
     # longer saw the template it was tuned on. Keep the template intact and
     # drop the oldest part of the user's text instead.
-    user_budget = max(budget - n_tokens(_base_prompt("")), 1)
+    user_budget = max(budget - n_tokens(format_prompt("")), 1)
     prompt_ids = enc.encode_ordinary(original_prompt)
     while len(prompt_ids) > user_budget:
         original_prompt = enc.decode(prompt_ids[-user_budget:]).lstrip("�")
         # BPE merges across the template boundary can shift the count by a
         # token or two, so re-check the assembled prompt.
-        excess = n_tokens(_base_prompt(original_prompt)) - budget
+        excess = n_tokens(format_prompt(original_prompt)) - budget
         if excess <= 0 or user_budget == 1:
             break
         user_budget = max(user_budget - excess, 1)
 
-    base_prompt = _base_prompt(original_prompt)
+    base_prompt = format_prompt(original_prompt)
     if not sources:
         return base_prompt, sources
 

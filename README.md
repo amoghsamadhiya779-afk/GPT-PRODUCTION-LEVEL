@@ -74,6 +74,8 @@ graph LR
 ### Dynamic LoRA Adapters
 The backend hot-swaps LoRA (Low-Rank Adaptation) adapters at runtime without reloading the base model — used for the SFT instruction-tuning adapters (`sft_v1_small`/`sft_v1_medium`) and for adapters trained on-demand via Teach Mode (`/finetune`).
 
+Instruction tuning (both `training/finetune_instruct.py` and Teach Mode) uses **prompt-masked loss**: only response tokens are supervised. Previously two-thirds of the supervised tokens in `data/sft_mix.jsonl` were the fixed template and the user's instruction. The template itself lives in one place (`data/sft.py`) and is shared by training and serving, so the prompt an adapter is trained on is byte-for-byte the prompt it is served with.
+
 Adapters are selected **per request** (`"adapter"` in the `/generate` body: omit it for the server default, `"none"` for the base model), so one user's choice never changes the model for anyone else. Every adapter is validated against the running model's architecture before use and applied all-or-nothing. Setting the server-wide default is an admin operation (see below).
 
 ### Personas (Prompt-Based)
@@ -99,7 +101,7 @@ All settings are documented in [`.env.example`](.env.example).
 
 ## 3. Project Structure & Testing
 
-The system is covered by a `pytest` suite of **76 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
+The system is covered by a `pytest` suite of **82 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
 
 ```
 GPT-PRODUCTION-LEVEL/
@@ -108,7 +110,7 @@ GPT-PRODUCTION-LEVEL/
 ├── frontend/             # Next.js App Router (React)
 ├── data/                 # Datasets & tokenization utilities
 ├── training/             # Pre-training and LoRA fine-tuning scripts
-├── tests/                # 76 unit & integration tests
+├── tests/                # 82 unit & integration tests
 └── checkpoints/          # Base models and adapter states
 ```
 

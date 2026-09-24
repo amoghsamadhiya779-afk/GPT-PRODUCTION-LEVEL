@@ -25,11 +25,15 @@ def calc_loss_batch(
     model,
     device: torch.device,
 ) -> Tensor:
-    """Compute cross-entropy loss for a single batch."""
+    """Compute cross-entropy loss for a single batch.
+
+    Target positions equal to -100 (data.sft.IGNORE_INDEX) are excluded, which
+    is how instruction datasets mask prompt and padding tokens.
+    """
     input_batch = input_batch.to(device)
     target_batch = target_batch.to(device)
     logits = model(input_batch)
-    loss = F.cross_entropy(logits.flatten(0, 1), target_batch.flatten())
+    loss = F.cross_entropy(logits.flatten(0, 1), target_batch.flatten(), ignore_index=-100)
     return loss
 
 

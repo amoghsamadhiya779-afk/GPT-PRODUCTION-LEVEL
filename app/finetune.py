@@ -6,10 +6,11 @@ import threading
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
 from app.adapters import ADAPTERS_DIR, adapter_path
 from app.schemas import FinetuneRequest
+from data.sft import IGNORE_INDEX, SFTDataset, collate_sft
 from model.gpt import GPTModel
 from model.lora import LORA_TARGET_MODULES, inject_lora, mark_only_lora_as_trainable, get_lora_state_dict, strip_lora_wrapper_keys
 from model.tokenizer import GPT2Tokenizer
@@ -18,59 +19,6 @@ TEACH_LORA_R = 4
 TEACH_LORA_ALPHA = 8.0
 
 logger = logging.getLogger(__name__)
-
-class AlpacaDataset(Dataset):
-    def __init__(self, examples, tokenizer, max_length=256):
-        self.input_ids = []
-        self.target_ids = []
-        
-        for ex in examples:
-            text = (
-                "Below is an instruction that describes a task. "
-                "Write a response that appropriately completes the request.\n\n"
-                f"### Instruction:\n{ex.instruction}\n\n"
-                f"### Response:\n{ex.response}"
-            )
-            # User-supplied text: "<|endoftext|>" inside it stays plain text;
-            # only the terminator we append is the real EOS token.
-            token_ids = torch.tensor(tokenizer.encode_ordinary(text) + [tokenizer.eos_id])
-            
-            if token_ids.size(0) > max_length:
-                token_ids = token_ids[:max_length]
-            
-            if token_ids.size(0) > 1:
-                self.input_ids.append(token_ids[:-1])
-                self.target_ids.append(token_ids[1:])
-
-    def __len__(self):
-        return len(self.input_ids)
-
-    def __getitem__(self, idx):
-        return self.input_ids[idx], self.target_ids[idx]
-
-def collate_fn(batch, pad_token_id=50256):
-    inputs, targets = zip(*batch)
-    
-    max_len_in_batch = max([x.size(0) for x in inputs])
-    
-    padded_inputs = []
-    padded_targets = []
-    
-    for i in range(len(inputs)):
-        inp = inputs[i]
-        tgt = targets[i]
-        
-        pad_len = max_len_in_batch - inp.size(0)
-        
-        if pad_len > 0:
-            inp = F.pad(inp, (0, pad_len), value=pad_token_id)
-            tgt = F.pad(tgt, (0, pad_len), value=-100)
-            
-        padded_inputs.append(inp)
-        padded_targets.append(tgt)
-        
-    return torch.stack(padded_inputs), torch.stack(padded_targets)
-
 
 class FinetuneJobError(Exception):
     """A failure whose message is safe to show to the client."""
@@ -108,16 +56,21 @@ def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lo
 
         tokenizer = GPT2Tokenizer()
         pad_id = tokenizer.eos_id
-        dataset = AlpacaDataset(req.examples, tokenizer, max_length=base_engine.model_config["context_length"])
-        
+        # Loss on response tokens only (prompt positions are IGNORE_INDEX).
+        dataset = SFTDataset(
+            ((ex.instruction, ex.response) for ex in req.examples),
+            tokenizer,
+            max_length=base_engine.model_config["context_length"],
+        )
+
         if len(dataset) == 0:
-            raise FinetuneJobError("All examples were empty or invalid.")
-            
+            raise FinetuneJobError("All examples were empty or too long to leave room for a response.")
+
         dataloader = DataLoader(
-            dataset, 
-            batch_size=min(4, len(dataset)), 
-            shuffle=True, 
-            collate_fn=lambda b: collate_fn(b, pad_token_id=pad_id)
+            dataset,
+            batch_size=min(4, len(dataset)),
+            shuffle=True,
+            collate_fn=lambda b: collate_sft(b, pad_token_id=pad_id)
         )
         
         optimizer = torch.optim.AdamW(
@@ -151,7 +104,7 @@ def run_lora_finetune_job(job_state: dict, req: FinetuneRequest, base_engine, lo
                 optimizer.zero_grad()
                 logits = model(input_batch)
                 
-                loss = F.cross_entropy(logits.flatten(0, 1), target_batch.flatten(), ignore_index=-100)
+                loss = F.cross_entropy(logits.flatten(0, 1), target_batch.flatten(), ignore_index=IGNORE_INDEX)
                 
                 loss.backward()
                 optimizer.step()
