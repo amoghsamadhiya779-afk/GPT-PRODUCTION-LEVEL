@@ -121,6 +121,13 @@ class GenerationResponse(BaseModel):
         default=None,
         description="List of search result sources used for RAG context."
     )
+    citations: list[dict] | None = Field(
+        default=None,
+        description=(
+            "For web-search answers: which source (1-based, matching `sources`) supports "
+            "each cited sentence of the answer, with its support score."
+        ),
+    )
     adapter: str | None = Field(
         default=None,
         description="LoRA adapter the response was generated with (null = base model)."

@@ -6,7 +6,6 @@ template, conversation history, web-source grounding, and the token budget --
 lives here, so evaluations measure exactly the prompts users are served.
 """
 
-import re
 from collections.abc import Sequence
 
 import tiktoken
@@ -14,45 +13,6 @@ import tiktoken
 # The instruction template shared with SFT training, so serving prompts are
 # byte-for-byte what the adapters were trained on.
 from data.sft import format_prompt
-
-STOP_WORDS = {"a", "an", "the", "and", "but", "if", "or", "because", "as", "what", "which", "this", "that", "these", "those", "then", "just", "so", "than", "such", "both", "through", "about", "for", "is", "of", "while", "during", "to", "in", "it", "on", "with"}
-
-def check_grounding_safety(prompt: str, answer: str, sources: list) -> str:
-    if not sources:
-        return ""
-
-    def get_words(text):
-        words = re.findall(r'\b[a-z]+\b', text.lower())
-        return set(w for w in words if w not in STOP_WORDS)
-
-    gen_words = get_words(answer)
-    source_words = set()
-    for s in sources:
-        source_words.update(get_words(s['snippet']))
-
-    overlap = len(gen_words.intersection(source_words))
-    overlap_ratio = overlap / len(gen_words) if gen_words else 0.0
-    # Trigger when the answer barely echoes the sources -- either in absolute
-    # terms (very few shared substantive words, catches short answers that
-    # are entirely off-topic) or proportionally (mostly made up of words that
-    # appear nowhere in the sources, catches longer answers that drift).
-    if overlap < 3 or (len(gen_words) >= 6 and overlap_ratio < 0.2):
-        best_sentence = ""
-        max_overlap = -1
-        prompt_words = get_words(prompt)
-
-        for s in sources:
-            sentences = re.split(r'(?<=[.!?]) +', s['snippet'])
-            for sent in sentences:
-                sent_words = get_words(sent)
-                o = len(prompt_words.intersection(sent_words))
-                if o > max_overlap:
-                    max_overlap = o
-                    best_sentence = sent.strip()
-
-        if best_sentence:
-            return f"From the sources: {best_sentence}.\n\n"
-    return ""
 
 
 def history_pairs(turns) -> list[tuple[str, str]]:

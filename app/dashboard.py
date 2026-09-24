@@ -9,7 +9,6 @@ custom widget overrides. Connects to the FastAPI backend or falls back to local 
 import html
 import os
 import sys
-import time
 import requests
 import streamlit as st
 from PIL import Image

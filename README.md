@@ -101,12 +101,27 @@ Adapters are selected **per request** (`"adapter"` in the `/generate` body: omit
 ### Personas (Prompt-Based)
 Personas (*Socrates*, *Einstein*, *Shakespeare*) are prompt-engineering presets, not separate fine-tuned models — there are no persona-specific LoRA adapters. Selecting one applies a style-framing instruction prepended to the prompt plus a matching sampling-parameter preset (temperature, penalties, web search on/off). Quality depends on the base/SFT model's ability to follow the framing instruction, not on dedicated persona training.
 
-### Grounded RAG Generation
+### Grounded RAG Generation with Citations
 When web search is enabled, the API:
-1. Queries Serper.dev for live snippets.
-2. Ranks and deduplicates snippets based on keyword overlap.
-3. Pre-pends the snippets as context.
-4. **Safety Net**: Computes extractive overlap on the generated answer; if overlap is near zero (hallucination), it prepends a direct quote from the sources.
+1. Queries Serper.dev (or DuckDuckGo HTML as a fallback) for live snippets.
+2. **Hardens them** (`app/retrieval.py`): snippets are untrusted third-party text, so template imitation (`### Response:`, `<|endoftext|>`) and invisible/control characters are stripped, and results phrased as instructions to the model ("ignore all previous instructions…") are dropped.
+3. **Ranks them** by query-term coverage — the share of the query's content words (stopwords removed, Snowball-stemmed) found in each result — optionally fused with a dense embedding reranker (`RAG_EMBED_MODEL`), then de-duplicates and keeps the top 3.
+4. Numbers them `[1]..[n]` in the prompt.
+5. **Cites the answer** (`app/citations.py`): each answer sentence is attributed to the source containing most of its content words and gets an inline `[n]` marker; citations the model writes itself are kept only if they point at a real source. The response carries `citations: [{sentence, source, support}]`, and the chat UI renders each `[n]` as a link to its numbered source card.
+6. **Safety Net**: if fewer than half the checkable sentences are supported by any source, the answer is led by a cited quote from the best-matching source.
+
+Retrieval quality is measured by the `retrieval` eval suite (24 labeled queries with traps: stopword-only matches, same word/different meaning, keyword-stuffed injection):
+
+| Ranker | MRR | Precision@1 | Recall@3 |
+|---|---|---|---|
+| Random order | 0.555 | — | — |
+| Previous (raw shared words incl. stopwords) | 0.783 | 0.625 | 0.854 |
+| Okapi BM25 (tried, rejected) | 0.689 | — | — |
+| **Coverage + stemming + injection filter** | **0.872** | **0.792** | **0.938** |
+
+BM25 loses here because IDF over ~5 candidates gives the most weight to a word only an off-topic result shares. The remaining misses are synonyms ("tallest"/"highest") — what the dense reranker is for; its weight (`RAG_DENSE_WEIGHT`) is untuned, so measure with `python -m evals --suites retrieval` when enabling it.
+
+The shipped SFT adapter was trained on grounded examples whose responses never cite, so today citations come from post-hoc attribution. `python data/add_citations.py --data data/sft_mix.jsonl --out data/sft_mix_cited.jsonl` rewrites those examples with citations (2,610 of 4,011 grounded responses gain at least one) for retraining a model that cites on its own.
 
 ### Security & Robustness
 - **Admission control:** the batch scheduler has a bounded wait queue (`ENGINE_MAX_QUEUE`) — overload gets a fast `503` + `Retry-After` instead of piling up threads. A client disconnect cancels its request and frees the batch slot at the next step.
@@ -121,7 +136,7 @@ All settings are documented in [`.env.example`](.env.example).
 
 ## 3. Project Structure & Testing
 
-The system is covered by a `pytest` suite of **111 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
+The system is covered by a `pytest` suite of **129 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
 
 ```
 GPT-PRODUCTION-LEVEL/
@@ -131,7 +146,7 @@ GPT-PRODUCTION-LEVEL/
 ├── data/                 # Datasets & tokenization utilities
 ├── training/             # Pre-training and LoRA fine-tuning scripts
 ├── evals/                # Eval harness: perplexity, multiple choice, behavior checks
-├── tests/                # 111 unit & integration tests
+├── tests/                # 129 unit & integration tests
 └── checkpoints/          # Base models and adapter states
 ```
 
@@ -143,7 +158,8 @@ GPT-PRODUCTION-LEVEL/
 |---|---|
 | `heldout` | Response-only loss and perplexity on `data/sft_eval.jsonl`, masked exactly like SFT |
 | `mc` | 32 multiple-choice questions scored by answer log-likelihood (raw and per-token normalized) — a stable signal even when generations are weak |
-| `behavior` | 24 greedy generations checked by rules: factual recall, instruction following, chitchat, multi-turn memory, RAG answers over *invented* facts (only the sources can answer), plus hygiene on every output (template leakage, empty, failure to stop, repetition) |
+| `behavior` | 24 greedy generations checked by rules: factual recall, instruction following, chitchat, multi-turn memory, RAG answers over *invented* facts (only the sources can answer, and the share that get a citation is reported), plus hygiene on every output (template leakage, empty, failure to stop, repetition) |
+| `retrieval` | MRR, precision@1 and recall@3 of the production search-result pipeline on 24 labeled queries — no model needed |
 
 ```bash
 python -m evals --checkpoint checkpoints/best_model.pt --adapter sft_v1_small --out reports/sft_v1_small.json

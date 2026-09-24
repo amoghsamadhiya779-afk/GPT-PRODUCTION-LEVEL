@@ -9,6 +9,31 @@ import { api } from "@/lib/api";
 import { saveCorrection } from "@/lib/localFeedback";
 import { safeHttpUrl } from "@/lib/utils";
 
+function sourceAnchor(messageId: string, n: number) {
+  return `source-${messageId}-${n}`;
+}
+
+// Render inline citation markers ("[2]") as links to the numbered source
+// cards. Everything else stays plain text (React escapes it), and markers
+// that don't match a source are left as they are.
+function withCitationLinks(text: string, messageId: string, sourceCount: number): React.ReactNode[] {
+  return text.split(/(\[\d{1,2}\])/g).map((part, i) => {
+    const match = /^\[(\d{1,2})\]$/.exec(part);
+    const n = match ? Number(match[1]) : 0;
+    if (!match || n < 1 || n > sourceCount) return part;
+    return (
+      <a
+        key={i}
+        href={`#${sourceAnchor(messageId, n)}`}
+        aria-label={`Source ${n}`}
+        className="align-super text-[0.7em] font-mono text-accent hover:underline no-underline px-0.5"
+      >
+        [{n}]
+      </a>
+    );
+  });
+}
+
 function MessageFeedback({ prompt, response }: { prompt: string; response: string }) {
   const [rating, setRating] = useState<"up" | "down" | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -263,7 +288,11 @@ export default function ChatWindow({
                           : "bg-surface/40 border border-border/30 text-secondary rounded-tl-none"
                       }`}
                     >
-                      <span className="whitespace-pre-wrap">{message.content}</span>
+                      <span className="whitespace-pre-wrap">
+                        {!isUser && message.sources?.length
+                          ? withCitationLinks(message.content, message.id, message.sources.length)
+                          : message.content}
+                      </span>
                       
                       {/* Streaming Indicator */}
                       {message.isStreaming && (
@@ -307,12 +336,14 @@ export default function ChatWindow({
                           {message.sources.map((src, idx) => (
                             <a
                               key={idx}
+                              id={sourceAnchor(message.id, idx + 1)}
                               href={safeHttpUrl(src.link)}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="block p-2.5 rounded-lg border border-border/30 bg-surface/20 hover:bg-surface/55 hover:border-accent/40 transition-all duration-200 group"
+                              className="block p-2.5 rounded-lg border border-border/30 bg-surface/20 hover:bg-surface/55 hover:border-accent/40 transition-all duration-200 group scroll-mt-24 target:border-accent/60"
                             >
                               <div className="text-[11.5px] font-semibold text-primary group-hover:text-accent transition-colors truncate">
+                                <span className="font-mono text-accent mr-1.5">[{idx + 1}]</span>
                                 {src.title}
                               </div>
                               <div className="text-[10.5px] text-secondary/80 leading-relaxed line-clamp-2 mt-0.5">
