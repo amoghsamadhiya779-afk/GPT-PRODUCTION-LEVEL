@@ -36,6 +36,15 @@ EVAL_PROMPTS = [
     "summarize Cinderella in one sentence"
 ]
 
+def example_history(ex: dict) -> list[tuple[str, str]]:
+    """Optional multi-turn context: "history": [[user, assistant], ...], oldest first."""
+    return [(user, assistant) for user, assistant in ex.get("history", [])]
+
+
+def sft_triples(examples):
+    return ((ex["instruction"], ex["response"], example_history(ex)) for ex in examples)
+
+
 def get_lr(step: int, max_steps: int, max_lr: float, min_lr: float = 1e-6) -> float:
     warmup_steps = int(0.05 * max_steps)
     if step < warmup_steps:
@@ -120,14 +129,14 @@ def main():
     seen = set()
     clean_examples = []
     for ex in examples:
-        pair_hash = (ex["instruction"].strip(), ex["response"].strip())
+        pair_hash = (ex["instruction"].strip(), ex["response"].strip(), tuple(example_history(ex)))
         if pair_hash in seen:
             continue
         
         # Keep only examples that fit whole: prompt + response + EOS, with
         # max_length input positions after the next-token shift.
         n_tokens = (
-            len(tokenizer.encode_ordinary(format_prompt(ex["instruction"])))
+            len(tokenizer.encode_ordinary(format_prompt(ex["instruction"], example_history(ex))))
             + len(tokenizer.encode_ordinary(ex["response"])) + 1
         )
         if n_tokens <= max_length + 1:
@@ -143,7 +152,7 @@ def main():
     
     # Prompt-masked labels: loss (train and eval) is on response tokens only,
     # so eval_loss is not comparable with runs from before this change.
-    train_ds = SFTDataset(((ex["instruction"], ex["response"]) for ex in examples), tokenizer, max_length=max_length)
+    train_ds = SFTDataset(sft_triples(examples), tokenizer, max_length=max_length)
     collate = lambda b: collate_sft(b, pad_id)
 
     if args.model_size == "medium":
@@ -159,7 +168,7 @@ def main():
         with open(eval_path, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip(): eval_examples.append(json.loads(line))
-        eval_ds = SFTDataset(((ex["instruction"], ex["response"]) for ex in eval_examples), tokenizer, max_length=max_length)
+        eval_ds = SFTDataset(sft_triples(eval_examples), tokenizer, max_length=max_length)
         eval_loader = DataLoader(eval_ds, batch_size=physical_batch_size, shuffle=False, collate_fn=collate)
     logger.info(f"Loading base model from {checkpoint_path}")
     gpt_cfg_dict = model_config.copy()

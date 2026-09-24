@@ -80,6 +80,8 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+  // Generation failed; the content is an error notice, not a model reply.
+  isError?: boolean;
   // Stats
   latency?: number;
   tokensPerSecond?: number;

@@ -21,6 +21,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 
 import tiktoken
@@ -41,7 +42,7 @@ from app.schemas import GenerationRequest, GenerationResponse, FinetuneRequest, 
 from app.security import SecurityMiddleware, client_ip, require_admin
 # The instruction template shared with SFT training, so serving prompts are
 # byte-for-byte what the adapters were trained on.
-from data.sft import PROMPT_HEADER, format_prompt
+from data.sft import format_prompt
 
 # Set up logging
 logging.basicConfig(
@@ -354,11 +355,37 @@ def check_grounding_safety(prompt: str, answer: str, sources: list) -> str:
     return ""
 
 
-def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources: list | None, context_size: int) -> tuple[str, list | None]:
+def history_pairs(turns) -> list[tuple[str, str]]:
+    """Pair each user turn with the assistant reply that directly follows it.
+
+    Unanswered user turns (e.g. a failed generation) and assistant turns with
+    no preceding question (e.g. a persona's welcome message) are dropped, so
+    the prompt always alternates Instruction/Response.
+    """
+    pairs, question = [], None
+    for turn in turns:
+        text = turn.content.strip()
+        if turn.role == "user":
+            question = text or None
+        elif question is not None and text:
+            pairs.append((question, text))
+            question = None
+    return pairs
+
+
+def build_prompt_with_budget(
+    original_prompt: str,
+    max_new_tokens: int,
+    sources: list | None,
+    context_size: int,
+    history: Sequence[tuple[str, str]] = (),
+) -> tuple[str, list | None]:
     """Build the model prompt so prompt + completion fit the context window.
 
-    User text and web snippets are counted with encode_ordinary, exactly as
-    the engine will encode them (special-token strings stay plain text).
+    Priority when space runs out: the current prompt, then its web sources,
+    then earlier conversation turns (most recent first; the oldest are
+    dropped). User text and web snippets are counted with encode_ordinary,
+    exactly as the engine will encode them (special-token strings stay text).
     """
     enc = tiktoken.get_encoding("gpt2")
 
@@ -376,7 +403,7 @@ def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources:
     user_budget = max(budget - n_tokens(format_prompt("")), 1)
     prompt_ids = enc.encode_ordinary(original_prompt)
     while len(prompt_ids) > user_budget:
-        original_prompt = enc.decode(prompt_ids[-user_budget:]).lstrip("�")
+        original_prompt = enc.decode(prompt_ids[-user_budget:]).lstrip("\ufffd")
         # BPE merges across the template boundary can shift the count by a
         # token or two, so re-check the assembled prompt.
         excess = n_tokens(format_prompt(original_prompt)) - budget
@@ -384,41 +411,42 @@ def build_prompt_with_budget(original_prompt: str, max_new_tokens: int, sources:
             break
         user_budget = max(user_budget - excess, 1)
 
-    base_prompt = format_prompt(original_prompt)
-    if not sources:
-        return base_prompt, sources
+    instruction = original_prompt
+    if sources:
+        valid_sources = sources.copy()
+        while valid_sources:
+            context_str = ""
+            for i, res in enumerate(valid_sources, 1):
+                context_str += f"[{i}] {res['snippet']}\n"
+            grounded = f"{context_str}\nQuestion: {original_prompt}"
 
-    template_footer = f"\nQuestion: {original_prompt}\n\n### Response:\n"
-    valid_sources = sources.copy()
+            prompt_tokens = n_tokens(format_prompt(grounded))
+            if prompt_tokens <= budget:
+                instruction = grounded
+                break
 
-    while True:
-        if not valid_sources:
-            return base_prompt, []
+            excess = prompt_tokens - budget
 
-        context_str = ""
-        for i, res in enumerate(valid_sources, 1):
-            context_str += f"[{i}] {res['snippet']}\n"
+            last_src = valid_sources[-1]
+            raw_tokens = enc.encode_ordinary(last_src['snippet'])
 
-        prompt_text = PROMPT_HEADER + context_str + template_footer
+            trim_len = len(raw_tokens) - excess - 2
+            if trim_len <= 0:
+                valid_sources.pop()
+            else:
+                new_src = last_src.copy()
+                new_src['snippet'] = enc.decode(raw_tokens[:trim_len]).strip() + "..."
+                valid_sources[-1] = new_src
+        sources = valid_sources
 
-        prompt_tokens = n_tokens(prompt_text)
-        if prompt_tokens <= budget:
+    # Earlier turns get whatever room is left, newest first.
+    kept: list[tuple[str, str]] = []
+    for turn in reversed(history):
+        if n_tokens(format_prompt(instruction, [turn] + kept)) > budget:
             break
+        kept.insert(0, turn)
 
-        excess = prompt_tokens - budget
-
-        last_src = valid_sources[-1]
-        raw_tokens = enc.encode_ordinary(last_src['snippet'])
-
-        trim_len = len(raw_tokens) - excess - 2
-        if trim_len <= 0:
-            valid_sources.pop()
-        else:
-            new_src = last_src.copy()
-            new_src['snippet'] = enc.decode(raw_tokens[:trim_len]).strip() + "..."
-            valid_sources[-1] = new_src
-
-    return prompt_text, valid_sources
+    return format_prompt(instruction, kept), sources
 
 
 def _require_engine():
@@ -488,7 +516,9 @@ def generate_text(request: Request, body: GenerationRequest):
     adapter = _resolve_adapter(engine, body.adapter)
 
     sources = _web_sources(body)
-    prompt_text, sources = build_prompt_with_budget(body.prompt, body.max_new_tokens, sources, engine.context_size)
+    prompt_text, sources = build_prompt_with_budget(
+        body.prompt, body.max_new_tokens, sources, engine.context_size, history_pairs(body.history)
+    )
 
     gate = app.state.engine_gate
     if not gate.acquire(timeout=ENGINE_QUEUE_TIMEOUT):
@@ -555,7 +585,9 @@ async def generate_text_stream(request: Request, body: GenerationRequest):
     # health check -- for their full duration.
     adapter = await asyncio.to_thread(_resolve_adapter, engine, body.adapter)
     sources = await asyncio.to_thread(_web_sources, body)
-    prompt_text, sources = build_prompt_with_budget(body.prompt, body.max_new_tokens, sources, engine.context_size)
+    prompt_text, sources = build_prompt_with_budget(
+        body.prompt, body.max_new_tokens, sources, engine.context_size, history_pairs(body.history)
+    )
 
     gate = app.state.engine_gate
     if not await asyncio.to_thread(gate.acquire, ENGINE_QUEUE_TIMEOUT):

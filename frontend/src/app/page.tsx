@@ -15,7 +15,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import Logo from "@/components/Logo";
 import BootSequence from "@/components/BootSequence";
 import { Toaster } from "@/components/ui/toast";
-import { api, ApiError, HealthStatus } from "@/lib/api";
+import { api, ApiError, ChatTurn, HealthStatus } from "@/lib/api";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
@@ -38,6 +38,19 @@ const PERSONA_FRAMING: Record<"Socrates" | "Einstein" | "Shakespeare", string> =
   Shakespeare:
     "Respond in the voice and style of William Shakespeare: use rich, poetic, dramatic Early Modern English.",
 };
+
+// Earlier messages sent as conversation history. The server trims to the
+// model's context window anyway; this just bounds the request size.
+const MAX_HISTORY_MESSAGES = 12;
+
+// Prior turns the model should see: real exchanges only, not persona welcome
+// messages, error notices, or a reply that is still streaming.
+function buildHistory(messages: Message[]): ChatTurn[] {
+  return messages
+    .filter((m) => !m.id.startsWith("welcome-") && !m.isError && !m.isStreaming && m.content.trim())
+    .slice(-MAX_HISTORY_MESSAGES)
+    .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
+}
 
 export default function Home() {
   const { theme } = useTheme();
@@ -304,7 +317,10 @@ export default function Home() {
     );
   };
 
-  const handleSend = async (promptText: string) => {
+  // `priorMessages` is the conversation before this prompt. Regenerate passes
+  // it explicitly: reading `messages` there would see the stale render-time
+  // array, which still holds the answer being replaced.
+  const handleSend = async (promptText: string, priorMessages: Message[] = messages) => {
     if (isGenerating) return;
 
     abortControllerRef.current = new AbortController();
@@ -316,7 +332,7 @@ export default function Home() {
       content: promptText,
     };
 
-    const newMessages = [...messages, userMessage];
+    const newMessages = [...priorMessages, userMessage];
     updateSessionMessages(currentSessionId, newMessages);
 
     const assistantMsgId = String(Date.now() + 1);
@@ -349,6 +365,7 @@ export default function Home() {
           use_cache: settings.useCache,
           web_search: settings.webSearch || false,
           adapter: settings.activeAdapter ?? undefined,
+          history: buildHistory(priorMessages),
         };
 
         let currentContent = "";
@@ -512,6 +529,7 @@ export default function Home() {
                         ...m,
                         content: m.content + "\n\n" + errorText,
                         isStreaming: false,
+                        isError: true,
                       }
                     : m
                 ),
@@ -524,15 +542,15 @@ export default function Home() {
   };
 
   const handleRegenerate = () => {
-    // Find last user message
-    const userMsgs = messages.filter((m) => m.role === "user");
-    if (userMsgs.length === 0) return;
+    let lastUserIdx = -1;
+    messages.forEach((m, idx) => {
+      if (m.role === "user") lastUserIdx = idx;
+    });
+    if (lastUserIdx === -1) return;
 
-    const lastUserMsg = userMsgs[userMsgs.length - 1];
-    // Delete last assistant msg
-    const cleanMessages = messages.filter((_, idx) => idx < messages.length - 1);
-    updateSessionMessages(currentSessionId, cleanMessages);
-    handleSend(lastUserMsg.content);
+    // Re-ask the last question with the conversation as it was before it:
+    // drops the old answer instead of duplicating the question after it.
+    handleSend(messages[lastUserIdx].content, messages.slice(0, lastUserIdx));
   };
 
   const lastAssistantMessage = messages

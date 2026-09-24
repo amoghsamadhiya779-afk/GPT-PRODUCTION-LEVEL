@@ -1,7 +1,15 @@
 # app/schemas.py
 """Validation schemas for the FastAPI inference service."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
+
+
+class ChatTurn(BaseModel):
+    """One earlier message in the conversation."""
+    role: Literal["user", "assistant"]
+    content: str = Field(..., max_length=4000)
 
 
 class GenerationRequest(BaseModel):
@@ -73,6 +81,16 @@ class GenerationRequest(BaseModel):
     web_search: bool = Field(
         default=False,
         description="Whether to fetch context from web search (RAG) to guide generation."
+    )
+    history: list[ChatTurn] = Field(
+        default_factory=list,
+        max_length=40,
+        description=(
+            "Earlier turns of the conversation, oldest first, excluding the current "
+            "prompt. Each user turn is paired with the assistant turn after it; "
+            "unanswered or unpaired turns are ignored. Oldest turns are dropped "
+            "first when the conversation doesn't fit the context window."
+        ),
     )
     adapter: str | None = Field(
         default=None,

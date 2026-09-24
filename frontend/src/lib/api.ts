@@ -13,6 +13,11 @@ export class ApiError extends Error {
   }
 }
 
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface GeneratePayload {
   prompt: string;
   max_new_tokens: number;
@@ -25,6 +30,9 @@ export interface GeneratePayload {
   // LoRA adapter for this request only: omit for the server default,
   // "none" for the plain base model.
   adapter?: string;
+  // Earlier turns of this conversation, oldest first (the server drops the
+  // oldest ones if they don't fit the model's context window).
+  history?: ChatTurn[];
 }
 
 export interface StreamMetrics {
