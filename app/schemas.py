@@ -74,6 +74,16 @@ class GenerationRequest(BaseModel):
         default=False,
         description="Whether to fetch context from web search (RAG) to guide generation."
     )
+    adapter: str | None = Field(
+        default=None,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description=(
+            "LoRA adapter to generate with. Omit for the server's default adapter, "
+            "or pass \"none\" for the plain base model. Selected per request, so one "
+            "caller's choice never changes the model for anyone else."
+        ),
+    )
 
     @model_validator(mode='after')
     def check_min_max_tokens(self):
@@ -93,6 +103,10 @@ class GenerationResponse(BaseModel):
         default=None,
         description="List of search result sources used for RAG context."
     )
+    adapter: str | None = Field(
+        default=None,
+        description="LoRA adapter the response was generated with (null = base model)."
+    )
 
 
 class FinetuneExample(BaseModel):
@@ -101,7 +115,7 @@ class FinetuneExample(BaseModel):
 
 class FinetuneRequest(BaseModel):
     examples: list[FinetuneExample] = Field(..., min_length=1, max_length=500)
-    adapter_name: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    adapter_name: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
     steps: int = Field(default=200, le=200, ge=1)
     lr: float = Field(default=1e-4, ge=1e-6, le=1e-2)
 
@@ -111,9 +125,12 @@ class FinetuneStatus(BaseModel):
     total_steps: int
     current_loss: float | None
     eta_seconds: float | None
+    error: str | None = None
 
 class FeedbackRequest(BaseModel):
-    prompt: str
-    response: str
+    # Bounded so a single request can't make the server parse or store
+    # megabytes of text (previously these were unbounded).
+    prompt: str = Field(..., max_length=4000)
+    response: str = Field(..., max_length=8000)
     rating: str = Field(..., pattern="^(up|down)$")
-    correction: str | None = None
+    correction: str | None = Field(default=None, max_length=4000)

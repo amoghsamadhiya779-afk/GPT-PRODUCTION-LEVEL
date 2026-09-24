@@ -32,20 +32,9 @@ def load_model(checkpoint_path: str, device: torch.device) -> GPTModel:
     
     is_lora = checkpoint.get("is_lora", False)
     if is_lora:
-        from model.lora import inject_lora
-        lora_r = checkpoint.get("lora_r")
-        lora_alpha = checkpoint.get("lora_alpha")
-        if lora_r is None:
-            # Find any lora_A key to check its shape
-            lora_A_keys = [k for k in checkpoint["model_state_dict"].keys() if "lora_A" in k]
-            if lora_A_keys:
-                lora_r = checkpoint["model_state_dict"][lora_A_keys[0]].shape[0]
-            else:
-                lora_r = 4
-        if lora_alpha is None:
-            lora_alpha = float(lora_r * 2)
-            
-        inject_lora(model, r=lora_r, alpha=lora_alpha, target_modules=["W_query", "W_value"])
+        from model.lora import LORA_TARGET_MODULES, inject_lora, lora_hparams_from_checkpoint
+        lora_r, lora_alpha = lora_hparams_from_checkpoint(checkpoint)
+        inject_lora(model, r=lora_r, alpha=lora_alpha, target_modules=LORA_TARGET_MODULES)
         model.load_state_dict(checkpoint["model_state_dict"], strict=False)
     else:
         model.load_state_dict(checkpoint["model_state_dict"])
