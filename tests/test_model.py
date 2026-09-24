@@ -166,39 +166,35 @@ class TestGPTModel:
         model = GPTModel(TINY_CONFIG)
         model.eval()
         idx = torch.tensor([[10, 11, 12, 10, 11]], dtype=torch.long)
-        
-        # We manually patch the model's logits to forcefully loop
-        # by making token 12 the highest probability after 11.
+
+        # Force the model into a 10 -> 11 -> 12 -> 10 loop.
         original_forward = model.forward
-        
+        next_token = {10: 11, 11: 12, 12: 10}
+
         def mock_forward(idx_input):
             logits = original_forward(idx_input)
-            # Make sure token 12 is chosen when last two were 10, 11
-            # But the n-gram penalty should prevent this
-            if idx_input[0, -1].item() == 11:
-                logits[0, -1, 12] += 100.0  # Force 12
+            forced = next_token.get(idx_input[0, -1].item())
+            if forced is not None:
+                logits[0, -1, forced] += 100.0
             return logits
-            
-        model.forward = mock_forward
-        
-        # Test without n-gram penalty: should generate 12
-        torch.manual_seed(42)
-        out_no_penalty = generate(
-            model, idx.clone(), max_new_tokens=1, context_size=32,
-            temperature=0.0, no_repeat_ngram_size=0, use_cache=False
-        )
-        assert out_no_penalty[0, -1].item() == 12
 
-        # Test with n-gram penalty (size=3). 
-        # The sequence is [10, 11, 12, 10, 11]. Next token 12 would create n-gram [10, 11, 12] which already exists!
-        torch.manual_seed(42)
-        out_with_penalty = generate(
-            model, idx.clone(), max_new_tokens=1, context_size=32,
-            temperature=0.0, no_repeat_ngram_size=3, use_cache=False
-        )
-        assert out_with_penalty[0, -1].item() != 12, "n-gram penalty failed to block the repeated sequence"
-        
-        # Restore forward
+        model.forward = mock_forward
+
+        # Without the penalty the loop just continues.
+        out = generate(model, idx.clone(), max_new_tokens=6, context_size=32,
+                       temperature=0.0, no_repeat_ngram_size=0, use_cache=False)
+        assert out[0, 5:].tolist() == [12, 10, 11, 12, 10, 11]
+
+        out = generate(model, idx.clone(), max_new_tokens=6, context_size=32,
+                       temperature=0.0, no_repeat_ngram_size=3, use_cache=False)
+        generated = out[0, 5:].tolist()
+        trigrams = [tuple(generated[i:i + 3]) for i in range(len(generated) - 2)]
+        assert len(trigrams) == len(set(trigrams)), f"n-gram repeated within generation: {generated}"
+        # Prompt n-grams are NOT blocked: the model may quote its context
+        # (e.g. retrieved sources in RAG), so the first token is still 12
+        # even though [10, 11, 12] already occurs in the prompt.
+        assert generated[0] == 12
+
         model.forward = original_forward
 
     def test_advanced_sampling_kv_equivalence(self):
@@ -252,6 +248,75 @@ class TestGPTModel:
             "Cached and non-cached generation diverged once the sequence "
             "crossed context_size -- KV cache sliding-window bug regressed"
         )
+
+
+class TestAttentionMath:
+    def _reference_attention(self, mha, x, past=None):
+        """The explicit formula: softmax(QK^T / sqrt(d) + causal mask) V."""
+        b, t, _ = x.shape
+        q = mha.W_query(x).view(b, t, mha.num_heads, mha.head_dim).transpose(1, 2)
+        k = mha.W_key(x).view(b, t, mha.num_heads, mha.head_dim).transpose(1, 2)
+        v = mha.W_value(x).view(b, t, mha.num_heads, mha.head_dim).transpose(1, 2)
+        if past is not None:
+            k = torch.cat((past[0], k), dim=-2)
+            v = torch.cat((past[1], v), dim=-2)
+        total = k.shape[-2]
+        scores = q @ k.transpose(2, 3) / mha.head_dim ** 0.5
+        mask = torch.triu(torch.ones(total, total, dtype=torch.bool), diagonal=1)[total - t:]
+        weights = torch.softmax(scores.masked_fill(mask, float("-inf")), dim=-1)
+        out = (weights @ v).transpose(1, 2).reshape(b, t, mha.d_out)
+        return mha.out_proj(out)
+
+    def test_fused_attention_matches_explicit_formula(self):
+        torch.manual_seed(0)
+        mha = MultiHeadAttention(d_in=64, d_out=64, context_length=32, dropout=0.0, num_heads=4).eval()
+        x = torch.randn(2, 10, 64)
+        out, present = mha(x)
+        assert torch.allclose(out, self._reference_attention(mha, x), atol=1e-5)
+
+        # Multi-token query on top of a cache (the explicit-mask branch)
+        # and a single-token decode step.
+        for new_tokens in (3, 1):
+            x_new = torch.randn(2, new_tokens, 64)
+            out_new, _ = mha(x_new, layer_past=present)
+            assert torch.allclose(out_new, self._reference_attention(mha, x_new, past=present), atol=1e-5)
+
+    def test_forward_rejects_sequences_longer_than_context(self):
+        model = GPTModel(TINY_CONFIG)
+        with pytest.raises(ValueError, match="context length"):
+            model(torch.randint(0, 100, (1, TINY_CONFIG["context_length"] + 1)))
+
+
+class TestSampling:
+    def test_top_k_larger_than_vocab_does_not_crash(self):
+        from model.gpt import _sample_next_token
+        logits = torch.randn(1, 100)
+        tok = _sample_next_token(logits, temperature=1.0, top_k=10_000)
+        assert 0 <= tok.item() < 100
+
+    def test_all_candidates_banned_falls_back_instead_of_nan(self):
+        from model.gpt import _sample_next_token
+        # Unigram blocking over a sequence containing every vocab id bans
+        # everything; sampling from an all -inf row used to produce NaNs.
+        vocab = 8
+        idx = torch.arange(vocab).unsqueeze(0)
+        for temperature in (0.0, 1.0):
+            tok = _sample_next_token(torch.randn(1, vocab), temperature=temperature,
+                                     no_repeat_ngram_size=1, idx=idx, prompt_len=0)
+            assert 0 <= tok.item() < vocab
+
+    def test_top_p_uses_temperature_scaled_distribution(self):
+        from model.gpt import _sample_next_token
+        # At T=1 token 0 holds ~88% of the mass, so top_p=0.5 keeps only it.
+        # At T=100 the distribution is nearly flat and the nucleus must grow;
+        # filtering before scaling (the old order) would still keep only token 0.
+        logits = torch.tensor([[4.0, 2.0, 0.0, 0.0]])
+        torch.manual_seed(0)
+        sampled = {_sample_next_token(logits.clone(), temperature=100.0, top_p=0.5).item() for _ in range(200)}
+        assert len(sampled) > 1
+        torch.manual_seed(0)
+        sampled = {_sample_next_token(logits.clone(), temperature=1.0, top_p=0.5).item() for _ in range(200)}
+        assert sampled == {0}
 
 
 class TestLoRA:

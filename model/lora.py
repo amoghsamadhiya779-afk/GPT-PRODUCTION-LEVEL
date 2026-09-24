@@ -10,6 +10,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+# Attention projections every adapter in this repo adapts.
+LORA_TARGET_MODULES = ("W_query", "W_value")
+
 
 class LoRALinear(nn.Module):
     """Custom Low-Rank Adaptation (LoRA) Linear layer wrapper.
@@ -74,12 +77,29 @@ def mark_only_lora_as_trainable(model: nn.Module) -> None:
             param.requires_grad = False
 
 
+def lora_hparams_from_checkpoint(checkpoint: dict) -> tuple[int, float]:
+    """Return (r, alpha) for a LoRA checkpoint.
+
+    Older checkpoints may not record them: r is then inferred from the shape
+    of any lora_A matrix (r x in_features) and alpha falls back to the 2*r
+    convention every adapter in this repo was trained with.
+    """
+    r = checkpoint.get("lora_r")
+    if r is None:
+        a_ranks = [v.shape[0] for k, v in checkpoint["model_state_dict"].items() if k.endswith("lora_A")]
+        r = a_ranks[0] if a_ranks else 4
+    alpha = checkpoint.get("lora_alpha")
+    if alpha is None:
+        alpha = 2.0 * r
+    return int(r), float(alpha)
+
+
 def inject_lora(
     model: nn.Module,
     r: int = 4,
     alpha: float = 8.0,
     dropout: float = 0.0,
-    target_modules: list[str] = ["W_query", "W_value"],
+    target_modules: tuple[str, ...] = LORA_TARGET_MODULES,
 ) -> None:
     """Traverse the model and wrap target nn.Linear layers in LoRALinear adapters.
 
@@ -90,12 +110,12 @@ def inject_lora(
         dropout: Dropout rate applied before low-rank projection.
         target_modules: List of module attribute names to adapt (e.g. W_query, W_value).
     """
-    for name, module in model.named_modules():
-        for attr_name in dir(module):
-            attr = getattr(module, attr_name)
-            if isinstance(attr, nn.Linear) and attr_name in target_modules:
-                lora_layer = LoRALinear(attr, r=r, alpha=alpha, dropout=dropout)
-                setattr(module, attr_name, lora_layer)
+    # Snapshot the module list first so freshly inserted LoRALinear wrappers
+    # (and the nn.Linear inside them) are never visited and wrapped again.
+    for module in list(model.modules()):
+        for attr_name, child in list(module.named_children()):
+            if attr_name in target_modules and isinstance(child, nn.Linear):
+                setattr(module, attr_name, LoRALinear(child, r=r, alpha=alpha, dropout=dropout))
 
     # Freeze non-adapter parameters
     mark_only_lora_as_trainable(model)

@@ -7,6 +7,7 @@ built entirely from scratch using PyTorch primitives.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 
@@ -98,22 +99,34 @@ class MultiHeadAttention(nn.Module):
         # Current layer's key/value cache
         present = (keys, values)
 
-        # Scaled dot-product attention: Q @ K^T / sqrt(head_dim)
-        attn_scores = queries @ keys.transpose(2, 3)
-
-        # Apply causal mask — prevent attending to future tokens
+        # Scaled dot-product attention with a causal mask:
+        #     softmax(Q @ K^T / sqrt(head_dim) + causal_mask) @ V
+        # computed by PyTorch's fused kernel, which never materializes the full
+        # (num_tokens x total_tokens) score matrix and is several times faster
+        # than the explicit matmul/softmax chain on both CPU and GPU.
+        # tests/test_model.py checks it against the explicit formula.
         total_tokens = keys.shape[-2]
-        if num_tokens > 1:
+        if num_tokens == 1:
+            # A single new query may attend to every cached position.
+            attn_mask, is_causal = None, False
+        elif total_tokens == num_tokens:
+            attn_mask, is_causal = None, True
+        else:
+            # Multi-token query on top of a cache: query i sits at absolute
+            # position prev_tokens + i and may attend to keys 0..prev_tokens + i.
             prev_tokens = total_tokens - num_tokens
-            mask_bool = self.mask.bool()[:total_tokens, :total_tokens]
-            sliced_mask = mask_bool[prev_tokens:total_tokens, :total_tokens]
-            attn_scores.masked_fill_(sliced_mask, -torch.inf)
+            attn_mask = ~self.mask[prev_tokens:total_tokens, :total_tokens].bool()
+            is_causal = False
 
-        attn_weights = torch.softmax(attn_scores / keys.shape[-1]**0.5, dim=-1)
-        attn_weights = self.dropout(attn_weights)
+        context_vec = F.scaled_dot_product_attention(
+            queries, keys, values,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout.p if self.training else 0.0,
+            is_causal=is_causal,
+        )
 
-        # Weighted sum of values: (b, num_heads, num_tokens, head_dim)
-        context_vec = (attn_weights @ values).transpose(1, 2)
+        # (b, num_heads, num_tokens, head_dim) -> (b, num_tokens, num_heads, head_dim)
+        context_vec = context_vec.transpose(1, 2)
 
         # Concatenate heads: (b, num_tokens, d_out)
         context_vec = context_vec.contiguous().view(b, num_tokens, self.d_out)
