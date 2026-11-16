@@ -313,7 +313,13 @@ def run_eval(engine, suites=ALL_SUITES, limit: int | None = None, max_new_tokens
         start = time.perf_counter()
         metrics, details = runners[suite](load_jsonl(path, limit))
         report["timings_seconds"][suite] = round(time.perf_counter() - start, 2)
-        report["data"][suite] = {"path": os.path.relpath(path, REPO_ROOT), "sha256": _sha256(path)}
+        try:
+            rel_path = os.path.relpath(path, REPO_ROOT)
+        except ValueError:
+            # Windows: relpath cannot span drives (e.g. a temp dir on C: with the
+            # repo on D:), so fall back to the absolute path.
+            rel_path = os.path.abspath(path)
+        report["data"][suite] = {"path": rel_path, "sha256": _sha256(path)}
         report["metrics"].update(metrics)
         report["details"][suite] = details
     return report

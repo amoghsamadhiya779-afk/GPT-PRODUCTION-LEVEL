@@ -2,7 +2,7 @@
 
 ## 1. Correctness Suite (`pytest`)
 - **Command:** `python -m pytest tests -v`
-- **Result:** **58 passed** (including all existing API, dataset, LoRA, speculative decoding, and tokenizer tests plus 5 new KV systems tests).
+- **Result:** **140 passed** (all existing API, batching, retrieval, security, dataset, LoRA, speculative decoding, and tokenizer tests, plus 5 new KV systems tests).
 - **New Verification Tests:**
   - `tests/test_paged_kv.py`:
     - `test_block_alloc_free_and_oom`: Verifies FIFO allocation, reference counting, double-free prevention, and `RuntimeError` on pool exhaustion.

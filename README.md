@@ -145,7 +145,7 @@ All settings are documented in [`.env.example`](.env.example).
 
 ## 3. Project Structure & Testing
 
-The system is covered by a `pytest` suite of **129 baseline unit and integration tests** (including regression tests in `tests/test_security.py` that run against a real uvicorn server where client disconnects matter), plus **5 PagedAttention & RadixAttention tests** (`tests/test_paged_kv.py`, `tests/test_radix_cache.py`).
+The system is covered by a `pytest` suite of **140 unit and integration tests** (including regression tests in `tests/test_security.py` that run against a real uvicorn server where client disconnects matter, the speculative-decoding tests, and 5 PagedAttention & RadixAttention tests in `tests/test_paged_kv.py` and `tests/test_radix_cache.py`).
 
 ```
 GPT-PRODUCTION-LEVEL/
