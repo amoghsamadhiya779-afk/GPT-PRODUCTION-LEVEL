@@ -11,7 +11,7 @@ scaling, and top-k sampling.
 import torch
 import torch.nn as nn
 from torch import Tensor
-
+from model.paged_kv import PagedKVCache 
 from model.layers import LayerNorm, TransformerBlock
 from model.config import GPTConfig
 
@@ -64,6 +64,7 @@ class GPTModel(nn.Module):
         past_key_values: list[tuple[Tensor, Tensor]] | None = None,
         slot_batch=None,
         lora=None,
+        paged_kv: PagedKVCache | None = None,
     ) -> Tensor | tuple[Tensor, list[tuple[Tensor, Tensor]]]:
         """Forward pass through the GPT model.
 
@@ -93,7 +94,12 @@ class GPTModel(nn.Module):
             return self.out_head(self.final_norm(x))
 
         # Calculate dynamic absolute position indices for positional embeddings
-        prev_tokens = past_key_values[0][0].shape[-2] if past_key_values is not None else 0
+        if paged_kv is not None:
+            prev_tokens = paged_kv.seq_len
+        elif past_key_values is not None:
+            prev_tokens = past_key_values[0][0].shape[-2]
+        else:
+            prev_tokens = 0
         if prev_tokens + seq_len > self.cfg["context_length"]:
             raise ValueError(
                 f"Sequence length {prev_tokens + seq_len} exceeds the model's "
@@ -108,7 +114,9 @@ class GPTModel(nn.Module):
         new_past_key_values = []
         for i, block in enumerate(self.trf_blocks):
             past = past_key_values[i] if past_key_values is not None else None
-            x, present = block(x, layer_past=past, use_cache=use_cache, lora=lora)
+            x, present = block(
+                x, layer_past=past, use_cache=use_cache, lora=lora, paged_kv=paged_kv, layer_idx=i
+            )
             if use_cache:
                 new_past_key_values.append(present)
 

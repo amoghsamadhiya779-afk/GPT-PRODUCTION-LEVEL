@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from model.paged_kv import PagedKVCache 
+
 
 from model.kv_cache import SlotBatch  # noqa: F401  (type annotations)
 from model.lora import LoRARows, MultiLoRALinear
@@ -74,6 +76,8 @@ class MultiHeadAttention(nn.Module):
         use_cache: bool = False,
         slot: tuple["SlotBatch", int] | None = None,
         lora: LoRARows | None = None,
+        paged_kv: PagedKVCache | None = None,
+        layer_idx: int = 0,
     ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
         """Forward pass through multi-head causal self-attention.
 
@@ -116,8 +120,11 @@ class MultiHeadAttention(nn.Module):
             context_vec = context_vec.transpose(1, 2).contiguous().view(b, num_tokens, self.d_out)
             return self.out_proj(context_vec), None
 
-        # Concatenate with past key/value states if present
-        if layer_past is not None:
+        # Store into PagedKVCache if provided, otherwise fall back to standard concat
+        if paged_kv is not None:
+            paged_kv.append_tokens(layer_idx, keys, values)
+            keys, values = paged_kv.gather_kv(layer_idx)
+        elif layer_past is not None:
             past_keys, past_values = layer_past
             keys = torch.cat((past_keys, keys), dim=-2)
             values = torch.cat((past_values, values), dim=-2)

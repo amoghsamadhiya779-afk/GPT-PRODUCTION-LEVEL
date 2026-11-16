@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-
+from model.paged_kv import PagedKVCache 
 from model.attention import MultiHeadAttention
 
 
@@ -108,11 +108,21 @@ class TransformerBlock(nn.Module):
         use_cache: bool = False,
         slot=None,
         lora=None,
+        paged_kv: PagedKVCache | None = None,
+        layer_idx: int = 0,
     ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
         # Shortcut connection for attention block
         shortcut = x
         x = self.norm1(x)
-        x, present = self.att(x, layer_past=layer_past, use_cache=use_cache, slot=slot, lora=lora)  # (batch_size, num_tokens, emb_dim)
+        x, present = self.att(
+            x,
+            layer_past=layer_past,
+            use_cache=use_cache,
+            slot=slot,
+            lora=lora,
+            paged_kv=paged_kv,
+            layer_idx=layer_idx,
+        )  # (batch_size, num_tokens, emb_dim)
         x = self.drop_shortcut(x)
         x = x + shortcut           # Residual connection
 

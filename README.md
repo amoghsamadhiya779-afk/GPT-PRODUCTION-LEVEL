@@ -88,6 +88,15 @@ Measured on 4 CPU cores, GPT-2 small size, 8 concurrent 64-token requests:
 | Mixed traffic: adapter A, adapter B, base, interleaved | 24.5 tok/s, peak batch 1 | **60.0 tok/s**, peak batch 8 |
 | Base model only | 68.0 tok/s | 67.5 tok/s |
 
+### PagedAttention & RadixAttention (KV Memory & Prefix Reuse)
+To eliminate contiguous KV pre-allocation waste and redundant system-prompt prefill, the engine includes from-scratch implementations of **PagedAttention** (`model/paged_kv.py`) and **RadixAttention** (`model/radix_cache.py`):
+- **Paged KV Memory (`PhysicalBlockManager`, `PagedKVCache`):** Replaces $O(T^2)$ `torch.cat` reallocations and static per-request reservation with fixed-size physical blocks (`block_size = 16`), reference counting, and block-level Copy-on-Write.
+- **Radix Prefix Cache (`RadixTree`):** Indexes completed prompt blocks in a block-aligned Compressed Trie with mid-edge node splitting, request locking, and Min-Heap (`heapq`) LRU leaf eviction.
+
+**Measured Benchmarks (`evals/run_kv_benchmark.py` on CPU):**
+- **KV Memory Waste (`B = 16`, 8 mixed-length requests vs. `context_length = 512`):** Reduced from **62.5%** (`4,096` slots) to **2.1%** (`1,568` slots).
+- **Shared-Prefix TTFT (`192`-token shared prefix + `16`-token query, 4-layer GPT-2):** Reduced from **33.9 ms** to **10.1 ms** (**3.34x speedup** with `torch.allclose` logit equivalence).
+
 ### Dynamic LoRA Adapters
 The backend hot-swaps LoRA (Low-Rank Adaptation) adapters at runtime without reloading the base model — used for the SFT instruction-tuning adapters (`sft_v1_small`/`sft_v1_medium`) and for adapters trained on-demand via Teach Mode (`/finetune`).
 
@@ -136,18 +145,21 @@ All settings are documented in [`.env.example`](.env.example).
 
 ## 3. Project Structure & Testing
 
-The system is covered by a `pytest` suite of **129 unit and integration tests**, including regression tests for each fix above (`tests/test_security.py`) that run against a real uvicorn server where client disconnects matter.
+The system is covered by a `pytest` suite of **129 baseline unit and integration tests** (including regression tests in `tests/test_security.py` that run against a real uvicorn server where client disconnects matter), plus **5 PagedAttention & RadixAttention tests** (`tests/test_paged_kv.py`, `tests/test_radix_cache.py`).
 
 ```
 GPT-PRODUCTION-LEVEL/
 ├── app/                  # FastAPI server, inference engine, RAG search
-├── model/                # PyTorch primitives (attention, layers, lora, gpt)
+├── model/                # PyTorch primitives (attention, layers, lora, gpt, speculative, kv_cache, paged_kv, radix_cache)
 ├── frontend/             # Next.js App Router (React)
 ├── data/                 # Datasets & tokenization utilities
 ├── training/             # Pre-training and LoRA fine-tuning scripts
-├── evals/                # Eval harness: perplexity, multiple choice, behavior checks
-├── tests/                # 129 unit & integration tests
-└── checkpoints/          # Base models and adapter states
+├── evals/                # Eval harness (perplexity, MC, behavior) & KV benchmarks
+├── tests/                # Unit & integration tests (incl. PagedAttention & RadixAttention)
+├── checkpoints/          # Base models and adapter states
+├── SPEC.md               # PagedAttention & RadixAttention system spec
+├── DECISIONS.md          # Architectural Decision Records (ADRs)
+└── EVALS.md              # Verified pytest & benchmark evaluations
 ```
 
 ### Evaluation
@@ -202,7 +214,7 @@ npm run dev
 While this is a robust system, it is built for educational/portfolio purposes and is not a replacement for commercial LLMs:
 - **CPU Bottleneck**: The backend currently targets CPU deployment (e.g. Hugging Face free tier). Real-world systems run on GPUs via Triton/vLLM.
 - **Model Size**: 406M parameters is very small. It struggles with complex logical reasoning without RAG grounding.
-- **Batching**: Continuous batching and multi-LoRA batching are implemented, but prefill and decode share a step (a long prompt delays everyone's next token), and there is no paged attention or custom CUDA kernels -- the pieces vLLM-class servers add on top.
+- **Batching & Kernels**: Continuous batching, multi-LoRA batching, and standalone PagedAttention/RadixAttention modules (`model/paged_kv.py`, `model/radix_cache.py`) are implemented in pure PyTorch, though prefill and decode share a step in the batched scheduler (`SlotBatch` uses preallocated slot buffers) and there are no custom CUDA kernels -- the pieces vLLM-class GPU servers add on top.
 - **Generation Quality**: The custom LoRA finetuning on Cosmopedia text introduces style shifts but does not eliminate hallucinations entirely.
 
 ---
